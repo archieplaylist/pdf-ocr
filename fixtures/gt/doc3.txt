@@ -1,0 +1,6 @@
+Prosedur Pengiriman Barang
+Setiap pengiriman wajib melalui tiga tahap pemeriksaan sebelum barang dikeluarkan dari gudang. Tahap pertama adalah verifikasi dokumen pesanan oleh staf administrasi. Tahap kedua adalah pemeriksaan fisik jumlah dan kondisi barang oleh petugas gudang.
+Pengemasan
+Barang mudah pecah harus dibungkus dengan dua lapis pelindung dan diberi label peringatan berwarna merah. Pengemasan dilakukan pada meja kerja khusus agar berat paket dapat ditimbang secara langsung.
+Serah Terima
+Kurir menandatangani surat jalan rangkap tiga dan menyerahkan satu lembar kepada petugas keamanan. Salinan digital diunggah ke sistem pelacakan dalam waktu satu jam setelah keberangkatan.

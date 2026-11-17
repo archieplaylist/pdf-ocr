@@ -1,0 +1,13 @@
+FAKTUR PENJUALAN
+Nomor: INV-2025-0417
+Tanggal: 17 November 2025
+Kepada: PT Sinar Abadi, Jalan Merdeka 45, Bandung
+No | Deskripsi Barang | Jumlah | Harga Satuan | Total
+1 | Kertas A4 80 gram | 25 | 52000 | 1300000
+2 | Tinta printer hitam | 12 | 185000 | 2220000
+3 | Map plastik biru | 40 | 7500 | 300000
+4 | Stapler medium | 8 | 47500 | 380000
+Total: 4200000
+PPN 11 persen: 462000
+Jumlah dibayar: 4662000
+Pembayaran paling lambat 30 hari setelah tanggal faktur.
