@@ -17,6 +17,7 @@ class Line:
     bold: bool = False
     italic: bool = False
     font: str = ""
+    color: str = ""
     conf: float = 1.0
     group: int | None = None
 
@@ -209,6 +210,8 @@ def merge_lines_to_blocks(
         italic = sum(1 for l in group if l.italic) * 2 >= len(group)
         fonts = Counter(l.font for l in group if l.font)
         font = fonts.most_common(1)[0][0] if fonts else ""
+        colors = Counter(l.color for l in group if l.color)
+        color = colors.most_common(1)[0][0] if colors else ""
         blocks.append(
             Block(
                 type=kind,
@@ -220,6 +223,7 @@ def merge_lines_to_blocks(
                 bold=bold,
                 italic=italic,
                 font=font,
+                color=color,
             )
         )
     return blocks

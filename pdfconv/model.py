@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 
 @dataclass
 class Block:
-    type: str  # title | heading | para | table
+    type: str  # title | heading | para | table | image
     bbox: tuple[float, float, float, float]
     text: str = ""
     size: float = 0.0
@@ -19,7 +19,13 @@ class Block:
     bold: bool = False
     italic: bool = False
     font: str = ""
+    color: str = ""  # hex like #rrggbb
+    indent: float = 0.0
+    space_before: float = 0.0
     col_widths: list[float] | None = None
+    # Image payload (not serialized to JSON).
+    image_data: bytes | None = field(default=None, repr=False)
+    image_ext: str = "png"
 
     def as_dict(self) -> dict:
         d = asdict(self)
@@ -27,6 +33,8 @@ class Block:
         d["conf"] = round(self.conf, 3)
         if self.col_widths:
             d["col_widths"] = [round(v, 2) for v in self.col_widths]
+        # Never serialize raw image bytes.
+        d.pop("image_data", None)
         return d
 
 
@@ -40,6 +48,9 @@ class Page:
     # A page that is one big image with an OCR text layer, e.g. a scanned
     # letter. Auto layout keeps these pages as images.
     scan: bool = False
+    # Whether a scanned page is reliable enough to be rebuilt as editable text
+    # in `auto` layout instead of kept as a page image.
+    ocr_editable: bool = False
 
 
 @dataclass

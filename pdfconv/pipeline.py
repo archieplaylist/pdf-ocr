@@ -16,6 +16,28 @@ from .ocr import ocr_page
 PageCallback = Callable[[Page, float], None]
 
 
+def _scan_is_editable(page: Page) -> bool:
+    if not page.blocks:
+        return False
+    relevant = [b for b in page.blocks if (b.text or b.rows)]
+    if not relevant:
+        return False
+    confs = [b.conf for b in relevant]
+    if (sum(confs) / len(confs)) < 0.80:
+        return False
+    if any(b.conf < 0.60 for b in relevant):
+        return False
+    for b in relevant:
+        if b.type == "table" and b.rows:
+            if b.conf < 0.75:
+                return False
+            nonempty = sum(1 for r in b.rows for c in r if c.strip())
+            total = sum(len(r) for r in b.rows)
+            if total and nonempty / total < 0.3:
+                return False
+    return True
+
+
 def convert(
     path: str | Path,
     dpi: int = 300,
@@ -54,6 +76,10 @@ def convert(
                 blocks=blocks,
                 scan=scan,
             )
+            # In auto layout, a scanned page may still be rebuilt as text when
+            # OCR is reliable enough. Native pages are always text.
+            if source == "ocr":
+                result.ocr_editable = _scan_is_editable(result)
             pages.append(result)
             if on_page is not None:
                 on_page(result, time.perf_counter() - started)

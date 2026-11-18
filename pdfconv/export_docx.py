@@ -63,6 +63,8 @@ def write_docx(doc: Document, out: Path, layout: str = "auto") -> None:
                 for block in page.blocks:
                     if block.type == "table" and block.rows:
                         _add_table(dx, block, body)
+                    elif block.type == "image" and block.image_data:
+                        _add_image(dx, block, page)
                     elif block.text:
                         _add_text(dx, block, body)
     finally:
@@ -86,7 +88,11 @@ def _is_image_page(page, layout: str) -> bool:
     """True when this page should be written as a page-sized image."""
     if layout == "facsimile":
         return True
-    return layout == "auto" and (page.scan or page.source == "ocr")
+    if layout != "auto":
+        return False
+    if not (page.scan or page.source == "ocr"):
+        return False
+    return not getattr(page, "ocr_editable", False)
 
 
 def _body_size(doc: Document, layout: str) -> float:
@@ -165,19 +171,45 @@ def _add_text(dx, block: Block, body: float) -> None:
         return
     para = dx.add_paragraph()
     fmt = para.paragraph_format
-    fmt.space_before = Pt(0)
+    fmt.space_before = Pt(block.space_before or 0)
     fmt.space_after = Pt(_space_after(block))
     fmt.line_spacing = 1.15
     if block.type in ("title", "heading"):
         fmt.keep_with_next = True
     para.alignment = _ALIGNMENTS.get(block.align, WD_ALIGN_PARAGRAPH.LEFT)
+    if block.indent:
+        fmt.left_indent = Pt(block.indent)
 
     run = para.add_run(text)
     _style_run(run, block, body)
     if block.type in ("title", "heading"):
         run.bold = True
+    if block.color:
+        try:
+            run.font.color.rgb = RGBColor.from_string(block.color.lstrip("#"))
+        except Exception:
+            pass
     if block.conf < LOW_CONF:
         run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+
+
+def _add_image(dx, block: Block, page) -> None:
+    if not block.image_data:
+        return
+    from io import BytesIO
+
+    para = dx.add_paragraph()
+    fmt = para.paragraph_format
+    fmt.space_before = Pt(block.space_before or 0)
+    fmt.space_after = Pt(4)
+    fmt.line_spacing = 1.0
+    run = para.add_run()
+    try:
+        stream = BytesIO(block.image_data)
+        # Scale to fit printable width (~470pt) while keeping aspect ratio.
+        run.add_picture(stream, width=Pt(min(block.bbox[2] - block.bbox[0], 470.0)))
+    except Exception:
+        return
 
 
 def _style_run(run, block: Block, body: float) -> None:
@@ -198,7 +230,21 @@ def _font_name(font: str) -> str:
         return "Times New Roman"
     if "courier" in name or "mono" in name:
         return "Courier New"
-    if not font or "helvetica" in name or "arial" in name:
+    if "calibri" in name:
+        return "Calibri"
+    if "georgia" in name:
+        return "Georgia"
+    if "verdana" in name:
+        return "Verdana"
+    if "tahoma" in name:
+        return "Tahoma"
+    if "garamond" in name:
+        return "Garamond"
+    if "palatino" in name:
+        return "Palatino Linotype"
+    if "cambria" in name:
+        return "Cambria"
+    if "helvetica" in name or "arial" in name or not font:
         return "Arial"
     return font.split("+")[-1] or "Arial"
 

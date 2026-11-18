@@ -547,6 +547,62 @@ def _table_block(
     )
 
 
+def _refine_low_conf(
+    img: np.ndarray, blocks: list[Block], scale: float, lang: str, dpi: int
+) -> list[Block]:
+    out: list[Block] = []
+    for block in blocks:
+        if block.type == "table" or not block.text or block.conf >= 0.85:
+            out.append(block)
+            continue
+        x0, y0, x1, y1 = block.bbox
+        px = dpi / 72.0
+        pad = 12
+        ix0 = max(0, int(x0 * px) - pad)
+        iy0 = max(0, int(y0 * px) - pad)
+        ix1 = min(img.shape[1], int(x1 * px) + pad)
+        iy1 = min(img.shape[0], int(y1 * px) + pad)
+        crop = img[iy0:iy1, ix0:ix1]
+        if crop.size == 0:
+            out.append(block)
+            continue
+        ci = (crop < 128).sum(axis=0)
+        ri = (crop < 128).sum(axis=1)
+        xs = [i for i, v in enumerate(ci) if v > 3]
+        ys = [i for i, v in enumerate(ri) if v > 3]
+        if not xs or not ys:
+            out.append(block)
+            continue
+        crop = crop[min(ys) : max(ys) + 1, min(xs) : max(xs) + 1]
+        crop = cv2.copyMakeBorder(
+            crop, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255
+        )
+
+        best_text, best_conf = block.text, block.conf
+        for psm in (4, 6, 7, 8, 11, 12, 13):
+            ws = run_tesseract(crop, psm=psm, lang=lang, dpi=dpi)
+            if not ws:
+                continue
+            text = " ".join(w["text"] for w in ws)
+            text = " ".join(text.split())
+            if not text:
+                continue
+            conf = float(sum(w["conf"] for w in ws) / len(ws))
+            if conf > best_conf + 0.05 and len(text) >= max(3, len(block.text) * 0.5):
+                best_text, best_conf = text, conf
+        if best_text != block.text:
+            block.text = best_text
+            block.conf = best_conf
+        # Tidy residual junk before a known label.
+        for label in ("Website", "Email", "Nomor", "Lampiran", "Perihal"):
+            idx = block.text.find(label)
+            if 0 < idx < 40:
+                block.text = block.text[idx:]
+                break
+        out.append(block)
+    return out
+
+
 def ocr_page(page, dpi: int = 300, lang: str = "ind+eng") -> list[Block]:
     img = render_gray(page, dpi)
     img, angle, _metrics = preprocess(img, dpi)
@@ -598,7 +654,11 @@ def ocr_page(page, dpi: int = 300, lang: str = "ind+eng") -> list[Block]:
             ordered.insert(index, table_block)
         else:
             ordered.append(table_block)
-    return [b for b in ordered if b.text or b.rows]
+    result = [b for b in ordered if b.text or b.rows]
+    # Second pass: re-OCR low-confidence text blocks on a trimmed crop. This
+    # removes leading junk and recovers words that the full-page pass garbled.
+    result = _refine_low_conf(img, result, scale, lang, dpi)
+    return result
 
 
 def _center_inside(bbox, box_px, scale: float) -> bool:

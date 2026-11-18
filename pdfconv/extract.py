@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pymupdf
+
 from .layout import Line, merge_lines_to_blocks, order_lines
 from .model import Block
 
@@ -22,6 +24,9 @@ def extract_native(page) -> list[Block]:
             size = max(s["size"] for s in spans)
             bold = any("Bold" in s["font"] or s["flags"] & 16 for s in spans)
             italic = any("Italic" in s["font"] or s["flags"] & 2 for s in spans)
+            colors = [s.get("color", 0) for s in spans]
+            dom_color = max(set(colors), key=colors.count) if colors else 0
+            color = "#{:06x}".format(dom_color) if dom_color else ""
             lines.append(
                 Line(
                     bbox=tuple(ln["bbox"]),
@@ -30,6 +35,7 @@ def extract_native(page) -> list[Block]:
                     bold=bold,
                     italic=italic,
                     font=spans[0].get("font", ""),
+                    color=color,
                     # PyMuPDF already groups lines into paragraphs. Keeping its
                     # boundary stops the merge heuristic from gluing separate
                     # lines (e.g. an invoice's address block) together.
@@ -49,8 +55,6 @@ def extract_native(page) -> list[Block]:
 
     if table_blocks:
         if len(groups) <= 1:
-            # Insert in vertical order without re-sorting the text blocks: a
-            # plain y-sort interleaves labels and values that share a baseline.
             for table in table_blocks:
                 index = next(
                     (
@@ -63,6 +67,21 @@ def extract_native(page) -> list[Block]:
                 blocks.insert(index, table)
         else:
             blocks.extend(table_blocks)
+
+    # Interleave embedded images/logos by vertical position.
+    image_blocks = native_images(page)
+    if image_blocks:
+        merged: list[Block] = []
+        i = j = 0
+        while i < len(blocks) and j < len(image_blocks):
+            if blocks[i].bbox[1] <= image_blocks[j].bbox[1]:
+                merged.append(blocks[i]); i += 1
+            else:
+                merged.append(image_blocks[j]); j += 1
+        merged.extend(blocks[i:])
+        merged.extend(image_blocks[j:])
+        blocks = merged
+
     return blocks
 
 
@@ -70,6 +89,61 @@ def _bounds(lines: list[Line]) -> tuple[float, float] | None:
     if not lines:
         return None
     return (min(ln.x0 for ln in lines), max(ln.bbox[2] for ln in lines))
+
+
+def native_images(page) -> list[Block]:
+    out: list[Block] = []
+    try:
+        raw_blocks = page.get_text("dict").get("blocks", [])
+    except Exception:
+        raw_blocks = []
+    for raw in raw_blocks:
+        if raw.get("type") != 1:
+            continue
+        bbox = raw.get("bbox")
+        if not bbox:
+            continue
+        # Try to extract the image bytes.
+        image_bytes = None
+        ext = "png"
+        try:
+            xref = raw.get("xref") or 0
+            if xref:
+                info = page.parent.extract_image(xref)
+                image_bytes = info.get("image")
+                ext = info.get("ext", "png")
+        except Exception:
+            image_bytes = None
+        if image_bytes is None:
+            # Fall back to rendering the bbox region.
+            try:
+                pix = page.get_pixmap(clip=pymupdf.Rect(bbox), dpi=150)
+                image_bytes = pix.tobytes("png")
+                ext = "png"
+            except Exception:
+                continue
+        if not image_bytes:
+            continue
+        out.append(
+            Block(
+                type="image",
+                bbox=tuple(bbox),
+                text="",
+                conf=1.0,
+                image_data=image_bytes,
+                image_ext=ext,
+            )
+        )
+    # De-duplicate overlapping image blocks.
+    deduped: list[Block] = []
+    for b in out:
+        if any(
+            abs(b.bbox[0] - o.bbox[0]) < 2 and abs(b.bbox[1] - o.bbox[1]) < 2
+            for o in deduped
+        ):
+            continue
+        deduped.append(b)
+    return deduped
 
 
 def native_tables(page) -> list[Block]:
