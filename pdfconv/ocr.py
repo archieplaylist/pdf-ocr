@@ -250,38 +250,133 @@ def _hough_grid(img: np.ndarray) -> tuple[list[float] | None, list[float] | None
     return rows, cols
 
 
-def detect_grid(img: np.ndarray) -> tuple[list[float], list[float], tuple] | None:
-    """Find ruled-table row/column line positions (pixels)."""
+def _cluster(vals, tol):
+    vals = sorted(vals)
+    out = []
+    for v in vals:
+        if out and v - out[-1] < tol:
+            out[-1] = (out[-1] + v) / 2.0
+        else:
+            out.append(v)
+    return out
+
+
+def _region_table(img):
+    """Region-first detection for faint ruled grids."""
     h, w = img.shape
-    # Adaptive threshold helps faint/uneven grids; union with Otsu.
     bin_inv = cv2.adaptiveThreshold(
         255 - img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, -5
     )
     _, otsu = cv2.threshold(255 - img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     bin_inv = cv2.bitwise_or(bin_inv, otsu)
 
-    hk = cv2.getStructuringElement(cv2.MORPH_RECT, (max(40, w // 25), 1))
-    vk = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(40, h // 40)))
+    hk = cv2.getStructuringElement(cv2.MORPH_RECT, (max(w // 6, 180), 1))
     hor = cv2.morphologyEx(bin_inv, cv2.MORPH_OPEN, hk)
-    ver = cv2.morphologyEx(bin_inv, cv2.MORPH_OPEN, vk)
-    # Bridge broken strokes.
-    hor = cv2.morphologyEx(hor, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (max(40, w // 25), 3)))
-    ver = cv2.morphologyEx(ver, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (3, max(40, h // 40))))
+    hor = cv2.morphologyEx(hor, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (max(w // 5, 200), 3)))
+    row_flags = (hor > 0).sum(axis=1) > w * 0.15
 
-    rows = _group_runs((hor > 0).sum(axis=1) > w * 0.15)
-    cols = _group_runs((ver > 0).sum(axis=0) > h * 0.05)
+    rules = []
+    run = []
+    for i in range(h):
+        if row_flags[i]:
+            run.append(i)
+        elif run:
+            rules.append(sum(run) / len(run))
+            run = []
+    if run:
+        rules.append(sum(run) / len(run))
 
-    if len(rows) < 3 or len(cols) < 3:
-        fb_rows, fb_cols = _hough_grid(img)
-        if fb_rows is None:
-            return None
-        rows, cols = fb_rows, fb_cols
+    # Collect all candidate clusters, then prefer the one with a working vertical pass.
+    candidates = []
+    for start in range(len(rules)):
+        cluster_rules = [rules[start]]
+        for j in range(start + 1, len(rules)):
+            if rules[j] - cluster_rules[-1] <= max(60, h * 0.12):
+                cluster_rules.append(rules[j])
+            else:
+                break
+        if len(cluster_rules) >= 3 and (cluster_rules[-1] - cluster_rules[0]) < h * 0.35:
+            candidates.append(cluster_rules)
+    if not candidates:
+        return None
 
+    # Try each candidate (most rules first); accept first with >=3 verticals.
+    candidates.sort(key=len, reverse=True)
+    for cand in candidates:
+        y_top, y_bot = cand[0], cand[-1]
+        band_h = y_bot - y_top
+        if band_h < 20:
+            continue
+        band = img[int(y_top):int(y_bot) + 1, :]
+        if band.size == 0:
+            continue
+        bin_band = cv2.adaptiveThreshold(
+            255 - band, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, -5
+        )
+        _, otsu_band = cv2.threshold(255 - band, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        bin_band = cv2.bitwise_or(bin_band, otsu_band)
+        vk = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(int(band_h) // 2, 20)))
+        ver = cv2.morphologyEx(bin_band, cv2.MORPH_OPEN, vk)
+        ver = cv2.morphologyEx(ver, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (3, max(int(band_h) // 2, 20))))
+        col_flags = (ver > 0).sum(axis=0) > band_h * 0.5
+        verts = [i for i, on in enumerate(col_flags) if on]
+        cols = None
+        if len(verts) >= 3:
+            cols = _cluster(verts, 8)
+        else:
+            edges = cv2.Canny(band, 50, 150)
+            hl = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=60,
+                                minLineLength=int(band_h * 0.6), maxLineGap=8)
+            if hl is not None:
+                vs = []
+                for seg in hl.reshape(-1, 4):
+                    x1, y1, x2, y2 = [int(v) for v in seg]
+                    if abs(x2 - x1) <= 2 and abs(y2 - y1) >= band_h * 0.6:
+                        vs.append((x1 + x2) / 2.0)
+                cols = _cluster(vs, 8)
+        if cols is not None:
+            cols = [c for c in cols if 50 <= c <= w - 50]
+            if len(cols) >= 3 and (cols[-1] - cols[0]) >= w * 0.2:
+                return cand, cols
+    return None
+def detect_grid(img):
+    """Find ruled-table row/column line positions (pixels)."""
+    h, w = img.shape
+    rows = None
+    cols = None
+
+    region = _region_table(img)
+    if region is not None:
+        rows, cols = region
+
+    if rows is None or cols is None:
+        bin_inv = cv2.adaptiveThreshold(
+            255 - img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, -5
+        )
+        _, otsu = cv2.threshold(255 - img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        bin_inv = cv2.bitwise_or(bin_inv, otsu)
+        hk = cv2.getStructuringElement(cv2.MORPH_RECT, (max(40, w // 25), 1))
+        vk = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(40, h // 40)))
+        hor = cv2.morphologyEx(bin_inv, cv2.MORPH_OPEN, hk)
+        ver = cv2.morphologyEx(bin_inv, cv2.MORPH_OPEN, vk)
+        hor = cv2.morphologyEx(hor, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (max(40, w // 25), 3)))
+        ver = cv2.morphologyEx(ver, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (3, max(40, h // 40))))
+        r = _group_runs((hor > 0).sum(axis=1) > w * 0.15)
+        c = _group_runs((ver > 0).sum(axis=0) > h * 0.05)
+        if len(r) >= 3 and len(c) >= 3:
+            rows, cols = r, c
+        else:
+            fb_r, fb_c = _hough_grid(img)
+            if fb_r is not None:
+                rows, cols = fb_r, fb_c
+
+    if rows is None or cols is None:
+        return None
     if not (3 <= len(rows) <= 30 and 3 <= len(cols) <= 20):
         return None
     if np.diff(rows).min() < 6 or np.diff(cols).min() < 6:
         return None
-    if max(np.diff(rows)) > h * 0.35 or max(np.diff(cols)) > w * 0.6:
+    if max(np.diff(rows)) > h * 0.4 or max(np.diff(cols)) > w * 0.7:
         return None
     box = (cols[0], rows[0], cols[-1], rows[-1])
     if (box[2] - box[0]) * (box[3] - box[1]) > 0.9 * w * h:
@@ -392,13 +487,13 @@ def _table_block(
     jobs: list[np.ndarray | None] = []
     for r in range(n_rows):
         for c in range(n_cols):
-            y0, y1 = int(rows[r]) + 8, int(rows[r + 1]) - 6
-            x0, x1 = int(cols[c]) + 8, int(cols[c + 1]) - 6
+            y0, y1 = int(rows[r]) + 5, int(rows[r + 1]) - 4
+            x0, x1 = int(cols[c]) + 5, int(cols[c + 1]) - 4
             if y1 - y0 < 8 or x1 - x0 < 8:
                 jobs.append(None)
                 continue
             crop = img[y0:y1, x0:x1]
-            if (crop < 128).mean() < 0.003:  # blank cell
+            if (crop < 128).mean() < 0.002:  # blank cell
                 jobs.append(None)
                 continue
             jobs.append(
@@ -409,7 +504,7 @@ def _table_block(
         if job is None:
             return "", 1.0
         best_text, best_conf = "", 0.0
-        for psm in (7, 13):
+        for psm in (6, 7, 13):
             ws = run_tesseract(job, psm=psm, lang=lang, dpi=dpi)
             if not ws:
                 continue
@@ -465,11 +560,12 @@ def ocr_page(page, dpi: int = 300, lang: str = "ind+eng") -> list[Block]:
         candidate = _table_block(img, rows, cols, box, scale, lang, dpi)
         # Discard weak tables so the page falls back to plain text instead of
         # a grid of garbage cells.
-        if candidate is not None and candidate.conf >= 0.75 and any(
-            any(c.strip() for c in r) for r in (candidate.rows or [])
-        ):
-            table_block = candidate
-            table_box = box
+        if candidate is not None and candidate.conf >= 0.7:
+            nonempty = sum(1 for r in (candidate.rows or []) for c in r if c.strip())
+            total = sum(len(r) for r in (candidate.rows or []))
+            if total > 0 and nonempty / total >= 0.3:
+                table_block = candidate
+                table_box = box
 
     words = run_tesseract(img, psm=6, lang=lang, dpi=dpi)
     lines = _words_to_lines(words, scale)
@@ -485,7 +581,7 @@ def ocr_page(page, dpi: int = 300, lang: str = "ind+eng") -> list[Block]:
         bounds = (min(ln.x0 for ln in column), max(ln.bbox[2] for ln in column))
         ordered.extend(
             merge_lines_to_blocks(
-                column, page.rect.height, heading_ratio=1.06, column=bounds
+                column, page.rect.height, heading_ratio=1.12, column=bounds
             )
         )
 

@@ -226,7 +226,7 @@ def merge_lines_to_blocks(
 
 
 def _standalone(group: list[Line], base: float, heading_ratio: float) -> bool:
-    return len(group) == 1 and (group[0].bold or group[0].size > base * heading_ratio)
+    return len(group) == 1 and (group[0].bold or group[0].size > base * 1.15)
 
 
 def _join_lines(group: list[Line]) -> str:
