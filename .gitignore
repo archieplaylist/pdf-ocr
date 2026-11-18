@@ -10,6 +10,16 @@ __pycache__/
 venv/
 env/
 
+# Frontend
+node_modules/
+web/dist/
+web/.vite/
+
+# Test caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 # Generated output (recreated by pdfconv / eval.py)
 out/
 
@@ -29,3 +39,5 @@ Thumbs.db
 # Secrets
 .env
 *.pem
+
+test.pdf

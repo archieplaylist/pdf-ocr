@@ -21,6 +21,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=Path("out"), help="output directory")
     ap.add_argument("--dpi", type=int, default=300, help="OCR render DPI (default 300)")
     ap.add_argument("--lang", default="ind+eng", help="tesseract languages")
+    ap.add_argument(
+        "--layout",
+        default="auto",
+        choices=("auto", "flow", "facsimile"),
+        help="auto keeps scanned pages as images; flow rebuilds text; "
+        "facsimile uses page images everywhere",
+    )
     ap.add_argument("--json", type=Path, help="also dump the document model")
     args = ap.parse_args(argv)
 
@@ -56,7 +63,10 @@ def main(argv: list[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     for fmt in formats:
         target = args.out / f"{stem}.{fmt}"
-        EXPORTERS[fmt](doc, target)
+        if fmt == "docx":
+            write_docx(doc, target, layout=args.layout)
+        else:
+            EXPORTERS[fmt](doc, target)
         print(f"wrote {target}")
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)

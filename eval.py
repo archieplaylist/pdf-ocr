@@ -138,7 +138,9 @@ def main() -> int:
 
         docx_path = OUT / f"{name}.docx"
         xlsx_path = OUT / f"{name}.xlsx"
-        write_docx(doc, docx_path)
+        # Measure OCR quality on the rebuilt text, so scanned pages are not
+        # collapsed to images (which is what `auto` does for the deliverable).
+        write_docx(doc, docx_path, layout="flow")
         write_xlsx(doc, xlsx_path)
 
         got = docx_text(docx_path)

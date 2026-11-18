@@ -14,11 +14,19 @@ class Block:
     size: float = 0.0
     conf: float = 1.0
     rows: list[list[str]] | None = None
+    # Presentation hints. All optional so older model JSON still loads.
+    align: str = "left"  # left | center | right
+    bold: bool = False
+    italic: bool = False
+    font: str = ""
+    col_widths: list[float] | None = None
 
     def as_dict(self) -> dict:
         d = asdict(self)
         d["bbox"] = [round(v, 2) for v in self.bbox]
         d["conf"] = round(self.conf, 3)
+        if self.col_widths:
+            d["col_widths"] = [round(v, 2) for v in self.col_widths]
         return d
 
 
@@ -29,6 +37,9 @@ class Page:
     height: float
     source: str  # "native" | "ocr"
     blocks: list[Block] = field(default_factory=list)
+    # A page that is one big image with an OCR text layer, e.g. a scanned
+    # letter. Auto layout keeps these pages as images.
+    scan: bool = False
 
 
 @dataclass
@@ -45,6 +56,7 @@ class Document:
                         "number": p.number,
                         "size": [round(p.width, 1), round(p.height, 1)],
                         "source": p.source,
+                        "scan": p.scan,
                         "blocks": [b.as_dict() for b in p.blocks],
                     }
                     for p in self.pages

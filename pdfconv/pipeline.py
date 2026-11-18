@@ -2,17 +2,32 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+from typing import Callable
 
 import pymupdf
 
-from .detect import page_source
+from .detect import page_is_scan, page_source
 from .extract import extract_native
 from .model import Document, Page
 from .ocr import ocr_page
 
+PageCallback = Callable[[Page, float], None]
 
-def convert(path: str | Path, dpi: int = 300, lang: str = "ind+eng") -> Document:
+
+def convert(
+    path: str | Path,
+    dpi: int = 300,
+    lang: str = "ind+eng",
+    on_page: PageCallback | None = None,
+) -> Document:
+    """Convert *path* into the intermediate model.
+
+    ``on_page`` is called with each finished Page and its processing time in
+    seconds. It is purely observational: exceptions from it are not swallowed,
+    so callers that don't want to abort conversion should catch their own.
+    """
     path = Path(path)
     pdf = pymupdf.open(str(path))
     if pdf.needs_pass:
@@ -20,17 +35,28 @@ def convert(path: str | Path, dpi: int = 300, lang: str = "ind+eng") -> Document
         raise ValueError(f"{path.name}: password-protected PDF is not supported")
 
     pages: list[Page] = []
-    for number, page in enumerate(pdf, start=1):
-        source = page_source(page)
-        blocks = extract_native(page) if source == "native" else ocr_page(page, dpi, lang)
-        pages.append(
-            Page(
+    try:
+        for number, page in enumerate(pdf, start=1):
+            started = time.perf_counter()
+            scan = page_is_scan(page)
+            # A scanned page's text layer was produced by some earlier OCR run
+            # and is often worse than ours. Re-OCR the image instead of trusting
+            # it, so flow layout still gets readable text.
+            source = "ocr" if scan else page_source(page)
+            blocks = (
+                extract_native(page) if source == "native" else ocr_page(page, dpi, lang)
+            )
+            result = Page(
                 number=number,
                 width=page.rect.width,
                 height=page.rect.height,
                 source=source,
                 blocks=blocks,
+                scan=scan,
             )
-        )
-    pdf.close()
+            pages.append(result)
+            if on_page is not None:
+                on_page(result, time.perf_counter() - started)
+    finally:
+        pdf.close()
     return Document(path=str(path), pages=pages)

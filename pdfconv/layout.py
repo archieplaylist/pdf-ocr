@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import statistics
 from collections import Counter
 from dataclasses import dataclass
 
@@ -14,6 +15,8 @@ class Line:
     text: str
     size: float = 0.0
     bold: bool = False
+    italic: bool = False
+    font: str = ""
     conf: float = 1.0
     group: int | None = None
 
@@ -52,12 +55,12 @@ def order_lines(lines: list[Line], page_width: float) -> list[list[Line]]:
     if not lines:
         return []
     if len(lines) < 6:
-        return [sorted(lines, key=lambda l: (round(l.y0, 1), l.x0))]
+        return [_order_rows(lines)]
 
     lo = int(min(ln.x0 for ln in lines))
     hi = int(max(ln.bbox[2] for ln in lines))
     if hi - lo < 40:
-        return [sorted(lines, key=lambda l: (round(l.y0, 1), l.x0))]
+        return [_order_rows(lines)]
 
     coverage = bytearray(hi - lo + 1)
     for ln in lines:
@@ -81,7 +84,7 @@ def order_lines(lines: list[Line], page_width: float) -> list[list[Line]]:
     gutter_width, g0, g1 = best
     min_gutter = max(12.0, 0.03 * page_width)
     if gutter_width < min_gutter:
-        return [sorted(lines, key=lambda l: (round(l.y0, 1), l.x0))]
+        return [_order_rows(lines)]
 
     cut_lo, cut_hi = lo + g0, lo + g1
     left = [ln for ln in lines if ln.bbox[2] <= cut_lo + 2]
@@ -92,13 +95,58 @@ def order_lines(lines: list[Line], page_width: float) -> list[list[Line]]:
     # A gutter only counts as a column separator if both sides are substantial.
     need = max(2, int(0.2 * len(lines)))
     if len(left) < need or len(right) < need:
-        return [sorted(lines, key=lambda l: (round(l.y0, 1), l.x0))]
+        return [_order_rows(lines)]
 
     groups: list[list[Line]] = []
     for group in (spanning, left, right):
         if group:
-            groups.append(sorted(group, key=lambda l: (round(l.y0, 1), l.x0)))
+            groups.append(_order_rows(group))
     return groups
+
+
+def _order_rows(lines: list[Line]) -> list[Line]:
+    """Sort top-to-bottom, then left-to-right *within* a visual row.
+
+    PDFs often place labels and values on the same baseline with a fraction of
+    a point difference. Sorting by exact ``y`` interleaves them (and can put a
+    right-hand date before the label on its left). Cluster near-equal baselines
+    first, then order each row by x.
+    """
+    if not lines:
+        return []
+    heights = sorted(ln.height for ln in lines if ln.height > 0)
+    tol = max(2.0, min(8.0, 0.5 * heights[len(heights) // 2])) if heights else 3.0
+    ordered = sorted(lines, key=lambda ln: (ln.y0, ln.x0))
+    rows: list[list[Line]] = []
+    for ln in ordered:
+        if rows and abs(ln.y0 - rows[-1][0].y0) <= tol:
+            rows[-1].append(ln)
+        else:
+            rows.append([ln])
+    for row in rows:
+        row.sort(key=lambda ln: ln.x0)
+    return [ln for row in rows for ln in row]
+
+
+def _align(bbox, column: tuple[float, float] | None, line_h: float) -> str:
+    if column is None:
+        return "left"
+    x0, x1 = column
+    width = x1 - x0
+    block_width = bbox[2] - bbox[0]
+    if width <= 0 or block_width >= 0.85 * width:
+        return "left"
+    slack = max(12.0, 3.0 * line_h, 0.05 * width)
+    center = (bbox[0] + bbox[2]) / 2
+    # Check the page edges before the centre: a line starting at the left
+    # margin is left-aligned even when its width makes it look centred.
+    if bbox[0] - x0 <= slack:
+        return "left"
+    if x1 - bbox[2] <= slack:
+        return "right"
+    if abs(center - (x0 + x1) / 2) <= slack:
+        return "center"
+    return "left"
 
 
 def merge_lines_to_blocks(
@@ -106,12 +154,13 @@ def merge_lines_to_blocks(
     page_height: float,
     heading_ratio: float = 1.12,
     title_ratio: float = 1.5,
+    column: tuple[float, float] | None = None,
 ) -> list[Block]:
     """Greedy line->paragraph merge, then classify by size."""
     lines = [ln for ln in lines if ln.text.strip()]
     if not lines:
         return []
-    lines.sort(key=lambda l: (round(l.y0, 1), l.x0))
+    lines = _order_rows(lines)
 
     base = body_size(lines)
     paras: list[tuple[list[Line], bool]] = []
@@ -141,7 +190,8 @@ def merge_lines_to_blocks(
         text = _join_lines(group)
         if not text:
             continue
-        size = max((l.size for l in group), default=base)
+        sizes = [l.size for l in group if l.size > 0]
+        size = float(statistics.median(sizes)) if sizes else base
         bbox = (
             min(l.x0 for l in group),
             min(l.y0 for l in group),
@@ -155,7 +205,23 @@ def merge_lines_to_blocks(
         else:
             kind = "para"
         conf = sum(l.conf for l in group) / len(group)
-        blocks.append(Block(type=kind, bbox=bbox, text=text, size=size, conf=conf))
+        bold = sum(1 for l in group if l.bold) * 2 >= len(group)
+        italic = sum(1 for l in group if l.italic) * 2 >= len(group)
+        fonts = Counter(l.font for l in group if l.font)
+        font = fonts.most_common(1)[0][0] if fonts else ""
+        blocks.append(
+            Block(
+                type=kind,
+                bbox=bbox,
+                text=text,
+                size=size,
+                conf=conf,
+                align=_align(bbox, column, max(l.height for l in group)),
+                bold=bold,
+                italic=italic,
+                font=font,
+            )
+        )
     return blocks
 
 

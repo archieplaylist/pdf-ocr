@@ -1,0 +1,18 @@
+services:
+  pdfconv:
+    build: .
+    image: pdfconv:local
+    ports:
+      - "8000:8000"
+    environment:
+      MAX_UPLOAD_MB: "50"
+      MAX_PAGES: "100"
+      JOB_TTL_MIN: "60"
+      MAX_WORKERS: "2"
+      MAX_ACTIVE_JOBS: "4"
+    volumes:
+      - pdfconv-jobs:/data/jobs
+    restart: unless-stopped
+
+volumes:
+  pdfconv-jobs:
