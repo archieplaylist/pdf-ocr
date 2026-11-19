@@ -10,7 +10,7 @@ import pymupdf
 
 from .detect import page_is_scan, page_source
 from .extract import extract_native
-from .model import Document, Page
+from .model import Document, Page, ensure_ids
 from .ocr import ocr_page
 from .ocr_engine import get_engine
 
@@ -89,4 +89,6 @@ def convert(
                 on_page(result, time.perf_counter() - started)
     finally:
         pdf.close()
-    return Document(path=str(path), pages=pages)
+    doc = Document(path=str(path), pages=pages)
+    ensure_ids(doc)
+    return doc

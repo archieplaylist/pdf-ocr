@@ -116,6 +116,16 @@ Conversions are CPU-heavy, so the API accepts a job immediately and the
 frontend polls for page-by-page progress. Job state is in memory: run a single
 uvicorn worker (the Docker image does).
 
+### Live editing
+
+After a job finishes, the result view becomes an editor: click a block
+overlay (or use the block list) to edit its text, table cells, type,
+alignment, bold/italic and font size, add or remove blocks, and reorder
+them. Changes autosave to the job's model and every download (DOCX, XLSX,
+PDF) is rebuilt from the edited model. `rebuilt` PDFs reflow the edited
+text; `original layout` PDFs keep the source page and only rewrite the
+blocks you changed. Undo is per-page via "Revert page".
+
 ### API
 
 | Method | Path | Purpose |
@@ -124,18 +134,23 @@ uvicorn worker (the Docker image does).
 | `GET` | `/api/jobs/{id}` | status, per-page progress, timings, confidence |
 | `GET` | `/api/jobs/{id}/pages/{n}/preview.png` | rendered page (`?dpi=40..200`) |
 | `GET` | `/api/jobs/{id}/pages/{n}/blocks` | blocks + bboxes for the overlay |
-| `GET` | `/api/jobs/{id}/download/{docx,xlsx,json}` | finished artifacts |
+| `PATCH` | `/api/jobs/{id}/pages/{n}/blocks/{id}` | edit one block (text, cells, typography) |
+| `PUT` | `/api/jobs/{id}/pages/{n}/blocks` | replace a page's block list (add/delete/reorder) |
+| `GET` | `/api/jobs/{id}/download/{docx,xlsx,json,pdf,pdf-inplace}` | finished artifacts |
 | `GET` | `/api/fixtures` | bundled sample PDFs |
 | `DELETE` | `/api/jobs/{id}` | discard a job and its files |
 | `GET` | `/api/health` | engine/tesseract status |
 
 `POST /api/jobs` fields: `file` **or** `fixture`, `formats` (comma-separated
-`docx,xlsx`), `dpi` (72–600, default 300), `lang` (Tesseract language list,
+`docx,xlsx,pdf`), `dpi` (72–600, default 300), `lang` (Tesseract language list,
 default `ind+eng`), `layout` (`auto`, `flow`, `facsimile`; default `auto`),
 `engine` (`auto`, `rapidocr`, `tesseract`; default `auto`).
 `auto` rebuilds pages that have real text and keeps scanned pages as images;
 `flow` always rebuilds every page as editable text; `facsimile` inserts every
 page as a page image. JSON is always available from the job's model.
+PDF is also always downloadable after a job finishes, even when not requested
+(`rebuilt` reflows text, `original layout` keeps the source page and only
+rewrites edited blocks).
 Interactive API docs are at `/docs`.
 
 Configuration:
@@ -197,7 +212,7 @@ multi-language (Indonesian, English and most Latin-script languages).
 ## Usage (CLI)
 
 ```
-pdfconv in.pdf --to docx,xlsx --out out/ [--dpi 300] [--lang ind+eng] [--layout auto|flow|facsimile] [--ocr-engine auto|rapidocr|tesseract] [--json model.json]
+pdfconv in.pdf --to docx,xlsx,pdf --out out/ [--dpi 300] [--lang ind+eng] [--layout auto|flow|facsimile] [--ocr-engine auto|rapidocr|tesseract] [--pdf-mode reflow|inplace|both] [--json model.json]
 ```
 
 - Native pages are copied exactly; scanned pages go through deskew, binarise

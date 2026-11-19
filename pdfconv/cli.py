@@ -8,19 +8,30 @@ import time
 from pathlib import Path
 
 from .export_docx import write_docx
+from .export_pdf import write_pdf_inplace, write_pdf_reflow
 from .export_xlsx import write_xlsx
 from .pipeline import convert
 
-EXPORTERS = {"docx": write_docx, "xlsx": write_xlsx}
+EXPORTERS = {"docx": write_docx, "xlsx": write_xlsx, "pdf": write_pdf_reflow}
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="pdfconv", description=__doc__)
     ap.add_argument("input", type=Path, help="input PDF")
-    ap.add_argument("--to", default="docx,xlsx", help="comma-separated: docx,xlsx")
+    ap.add_argument(
+        "--to",
+        default="docx,xlsx",
+        help="comma-separated: docx,xlsx,pdf",
+    )
     ap.add_argument("--out", type=Path, default=Path("out"), help="output directory")
     ap.add_argument("--dpi", type=int, default=300, help="OCR render DPI (default 300)")
     ap.add_argument("--lang", default="ind+eng", help="tesseract languages")
+    ap.add_argument(
+        "--pdf-mode",
+        default="reflow",
+        choices=("reflow", "inplace", "both"),
+        help="PDF export style: reflow (rebuilt text) or inplace (original layout)",
+    )
     ap.add_argument(
         "--ocr-engine",
         default=None,
@@ -67,10 +78,21 @@ def main(argv: list[str] | None = None) -> int:
 
     stem = args.input.stem
     args.out.mkdir(parents=True, exist_ok=True)
-    for fmt in formats:
-        target = args.out / f"{stem}.{fmt}"
+    targets: list[str] = list(formats)
+    if "pdf" in targets and args.pdf_mode == "both":
+        targets.append("pdf-inplace")
+    for fmt in targets:
+        target = args.out / (
+            f"{stem}-original.pdf"
+            if fmt == "pdf-inplace"
+            else f"{stem}.{fmt}"
+        )
         if fmt == "docx":
             write_docx(doc, target, layout=args.layout)
+        elif fmt == "pdf":
+            write_pdf_reflow(doc, target, layout=args.layout)
+        elif fmt == "pdf-inplace":
+            write_pdf_inplace(doc, target)
         else:
             EXPORTERS[fmt](doc, target)
         print(f"wrote {target}")

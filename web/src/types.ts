@@ -43,12 +43,23 @@ export interface Job {
   sec_per_page: number;
   mean_conf: number;
   error: string | null;
+  edited?: boolean;
   created: number;
   updated: number;
   downloads: Record<string, string>;
 }
 
+export interface RunModel {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  font?: string;
+  size?: number;
+  color?: string;
+}
+
 export interface BlockModel {
+  id: string;
   type: BlockType;
   bbox: [number, number, number, number];
   text: string;
@@ -59,7 +70,14 @@ export interface BlockModel {
   bold?: boolean;
   italic?: boolean;
   font?: string;
+  color?: string;
   col_widths?: number[] | null;
+  indent?: number;
+  space_before?: number;
+  tab_stops?: number[] | null;
+  edited?: boolean;
+  added?: boolean;
+  runs?: RunModel[] | null;
 }
 
 export interface PageModel {
@@ -68,5 +86,9 @@ export interface PageModel {
   height: number;
   source: PageSource;
   scan?: boolean;
+  ocr_editable?: boolean;
+  rev: number;
+  edited?: boolean;
+  removed?: number[][];
   blocks: BlockModel[];
 }

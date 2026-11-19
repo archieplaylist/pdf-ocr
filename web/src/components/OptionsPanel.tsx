@@ -26,6 +26,13 @@ const FORMATS = [
       "Headings, paragraphs and real tables. Low-confidence OCR runs are highlighted.",
   },
   {
+    value: "pdf",
+    title: "PDF",
+    tag: "rebuilt or original",
+    blurb:
+      "A PDF export. 'rebuilt' reflows the extracted text; 'original layout' keeps the source page.",
+  },
+  {
     value: "xlsx",
     title: "XLSX",
     tag: "one sheet / table",
@@ -101,7 +108,7 @@ export function OptionsPanel({
           </h2>
         </div>
         <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
-          {formats.length} of 2 selected
+          {formats.length} of {FORMATS.length} selected
         </span>
       </div>
 
@@ -149,7 +156,7 @@ export function OptionsPanel({
           <span className="label" id="layout-label">
             Page layout
           </span>
-          <span className="font-mono text-[10px] text-muted">DOCX only</span>
+          <span className="font-mono text-[10px] text-muted">DOCX + PDF</span>
         </div>
         <div
           role="radiogroup"

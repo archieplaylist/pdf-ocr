@@ -5,15 +5,19 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 import pymupdf
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, field_validator
 
+from pdfconv.model import Block, Document, Page, new_id
 from pdfconv.ocr import TESSERACT
 from pdfconv.ocr_engine import available_engines
 
@@ -34,13 +38,23 @@ MEDIA_TYPES = {
     ),
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "json": "application/json",
+    "pdf": "application/pdf",
+    "pdf-inplace": "application/pdf",
 }
+
+MAX_BLOCKS = 500
+MAX_ROWS = 100
+MAX_COLS = 50
+MAX_CELL = 10_000
+MAX_TEXT = 200_000
 
 manager = JobManager()
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    global manager
+    manager = JobManager()
     yield
     manager.shutdown()
 
@@ -58,7 +72,7 @@ if origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
         allow_headers=["*"],
     )
 
@@ -118,6 +132,243 @@ async def _save_upload(upload: UploadFile, dest: Path) -> None:
         if fh.read(5) != b"%PDF-":
             dest.unlink(missing_ok=True)
             raise HTTPException(422, "that file is not a PDF")
+
+
+# -- edit payloads ---------------------------------------------------------
+
+
+class RunPayload(BaseModel):
+    text: str = Field(default="", max_length=MAX_TEXT)
+    bold: bool = False
+    italic: bool = False
+    font: str = Field(default="", max_length=120)
+    size: float = Field(default=0, ge=0, le=200)
+    color: str = Field(default="", max_length=9)
+
+    @field_validator("color")
+    @classmethod
+    def _check_color(cls, value):
+        return _validate_color(value)
+
+
+class BlockPatch(BaseModel):
+    """Partial update for one block. ``rev`` guards against stale writes."""
+
+    rev: int = Field(ge=0)
+    text: str | None = Field(default=None, max_length=MAX_TEXT)
+    rows: list[list[str]] | None = None
+    type: Literal["title", "heading", "para", "table"] | None = None
+    align: Literal["left", "center", "right"] | None = None
+    bold: bool | None = None
+    italic: bool | None = None
+    size: float | None = Field(default=None, ge=1, le=200)
+    font: str | None = Field(default=None, max_length=120)
+    color: str | None = Field(default=None, max_length=9)
+    indent: float | None = Field(default=None, ge=0, le=1000)
+    space_before: float | None = Field(default=None, ge=0, le=1000)
+    runs: list[RunPayload] | None = None
+
+    @field_validator("rows")
+    @classmethod
+    def _check_rows(cls, value):
+        return _validate_rows(value)
+
+    @field_validator("color")
+    @classmethod
+    def _check_color(cls, value):
+        return _validate_color(value)
+
+
+class BlockPayload(BaseModel):
+    id: str = Field(default="", max_length=64)
+    type: Literal["title", "heading", "para", "table", "image"] = "para"
+    bbox: list[float] | None = None
+    text: str = Field(default="", max_length=MAX_TEXT)
+    size: float | None = Field(default=None, ge=0, le=200)
+    conf: float | None = Field(default=None, ge=0, le=1)
+    rows: list[list[str]] | None = None
+    align: Literal["left", "center", "right"] = "left"
+    bold: bool = False
+    italic: bool = False
+    font: str = Field(default="", max_length=120)
+    color: str = Field(default="", max_length=9)
+    indent: float = Field(default=0, ge=0, le=1000)
+    space_before: float = Field(default=0, ge=0, le=1000)
+    tab_stops: list[float] | None = None
+    col_widths: list[float] | None = None
+    runs: list[RunPayload] | None = None
+
+    @field_validator("rows")
+    @classmethod
+    def _check_rows(cls, value):
+        return _validate_rows(value)
+
+    @field_validator("color")
+    @classmethod
+    def _check_color(cls, value):
+        return _validate_color(value)
+
+    @field_validator("bbox")
+    @classmethod
+    def _check_bbox(cls, value):
+        if value is None:
+            return None
+        if len(value) != 4:
+            raise ValueError("bbox must have four numbers")
+        return [float(item) for item in value]
+
+
+class PageBlocksUpdate(BaseModel):
+    rev: int = Field(ge=0)
+    blocks: list[BlockPayload] = Field(max_length=MAX_BLOCKS)
+
+
+def _validate_rows(value):
+    if value is None:
+        return None
+    if len(value) > MAX_ROWS:
+        raise ValueError(f"at most {MAX_ROWS} rows are allowed")
+    cleaned: list[list[str]] = []
+    for row in value:
+        if len(row) > MAX_COLS:
+            raise ValueError(f"at most {MAX_COLS} columns are allowed")
+        cleaned.append([str(cell)[:MAX_CELL] for cell in row])
+    return cleaned
+
+
+def _validate_color(value):
+    if value is None or value == "":
+        return value
+    if not re.fullmatch(r"#?[0-9a-fA-F]{6}", value):
+        raise ValueError("color must be a hex value like #rrggbb")
+    return value if value.startswith("#") else f"#{value}"
+
+
+# -- edit helpers ----------------------------------------------------------
+
+
+def _editable_job(job_id: str):
+    job = _get_job(job_id)
+    if job.status != "done":
+        raise HTTPException(409, "conversion is not finished")
+    if not job.model_path.is_file():
+        raise HTTPException(404, "document model is missing")
+    return job
+
+
+def _find_page(doc: Document, number: int) -> Page:
+    for page in doc.pages:
+        if page.number == number:
+            return page
+    raise HTTPException(404, "no such page")
+
+
+def _page_snapshot(page: Page) -> dict:
+    return {
+        "number": page.number,
+        "width": page.width,
+        "height": page.height,
+        "source": page.source,
+        "scan": page.scan,
+        "ocr_editable": page.ocr_editable,
+        "rev": page.rev,
+        "edited": page.edited,
+        "removed": page.removed,
+        "blocks": [block.as_dict() for block in page.blocks],
+    }
+
+
+def _mark_edited(job) -> None:
+    job.edited = True
+    job.updated = time.time()
+    job.invalidate_artifacts()
+
+
+def _apply_payload(block: Block, payload: BlockPayload) -> None:
+    if block.type == "image":
+        # Pictures are not editable, but they can be reordered.
+        return
+    block.type = payload.type
+    block.text = payload.text
+    block.rows = payload.rows
+    block.align = payload.align
+    block.bold = payload.bold
+    block.italic = payload.italic
+    block.font = payload.font
+    block.color = payload.color or ""
+    block.indent = payload.indent
+    block.space_before = payload.space_before
+    block.tab_stops = payload.tab_stops
+    block.col_widths = payload.col_widths
+    if payload.size is not None:
+        block.size = payload.size
+    if payload.conf is not None:
+        block.conf = payload.conf
+    if payload.runs is not None:
+        from pdfconv.model import Run
+
+        block.runs = [
+            Run(
+                text=item.text,
+                bold=item.bold,
+                italic=item.italic,
+                font=item.font,
+                size=item.size or 0.0,
+                color=item.color or "",
+            )
+            for item in payload.runs
+        ]
+        block.text = "".join(run.text for run in block.runs)
+
+
+def _new_block(payload: BlockPayload, page: Page, index: int) -> Block:
+    bbox = tuple(payload.bbox) if payload.bbox else _default_bbox(page, index)
+    return Block(
+        type=payload.type,
+        bbox=bbox,
+        text=payload.text,
+        size=payload.size or 0.0,
+        conf=1.0,
+        rows=payload.rows,
+        align=payload.align,
+        bold=payload.bold,
+        italic=payload.italic,
+        font=payload.font,
+        color=payload.color or "",
+        indent=payload.indent,
+        space_before=payload.space_before,
+        tab_stops=payload.tab_stops,
+        col_widths=payload.col_widths,
+        id=new_id(),
+        edited=True,
+        added=True,
+        runs=(
+            [
+                Run(
+                    text=item.text,
+                    bold=item.bold,
+                    italic=item.italic,
+                    font=item.font,
+                    size=item.size or 0.0,
+                    color=item.color or "",
+                )
+                for item in payload.runs
+            ]
+            if payload.runs is not None
+            else None
+        ),
+    )
+
+
+def _default_bbox(page: Page, index: int) -> tuple[float, float, float, float]:
+    left = 72.0
+    width = max(page.width - 2 * left, 80.0)
+    if page.blocks:
+        y = max(block.bbox[3] for block in page.blocks) + 8
+    else:
+        y = left
+    y = min(y, max(page.height - 24, left))
+    return (left, y, left + width, y + 18)
 
 
 # -- API -------------------------------------------------------------------
@@ -242,17 +493,41 @@ def download(job_id: str, fmt: str):
     job = _get_job(job_id)
     if job.status != "done":
         raise HTTPException(409, "conversion is not finished")
-    if fmt not in EXPORTERS and fmt != "json":
+    if fmt not in EXPORTERS and fmt not in ("json", "pdf-inplace"):
         raise HTTPException(404, "unknown format")
-    if fmt != "json" and fmt not in job.formats:
+    if fmt in ("docx", "xlsx") and fmt not in job.formats:
         raise HTTPException(404, "format was not requested")
-    path = job.output_path(fmt)
+    if not job.model_path.is_file():
+        raise HTTPException(410, "document model is no longer available")
+
+    if fmt == "json":
+        path = job.model_path
+    else:
+        # Regenerate from the current model so edits are always reflected.
+        with job.lock:
+            target = job.output_path(fmt)
+            tmp = target.with_name(f".{target.name}.{os.urandom(4).hex()}.tmp")
+            try:
+                job.render(fmt, tmp)
+                os.replace(tmp, target)
+            except Exception as exc:  # noqa: BLE001 - surfaced to the client
+                tmp.unlink(missing_ok=True)
+                raise HTTPException(
+                    500, f"could not build {fmt}: {exc}"
+                ) from exc
+        path = target
+
     if not path.is_file():
         raise HTTPException(410, "artifact is no longer available")
+    filename = (
+        f"{job.stem}-original.pdf"
+        if fmt == "pdf-inplace"
+        else f"{job.stem}.{fmt}"
+    )
     return FileResponse(
         path,
         media_type=MEDIA_TYPES[fmt],
-        filename=f"{job.stem}.{fmt}",
+        filename=filename,
     )
 
 
@@ -305,18 +580,112 @@ def page_blocks(job_id: str, number: int) -> dict:
         raise HTTPException(409, "conversion is not finished")
     if not job.model_path.is_file():
         raise HTTPException(404, "document model is missing")
-    model = json.loads(job.model_path.read_text(encoding="utf-8"))
-    for page in model["pages"]:
-        if page["number"] == number:
-            return {
-                "number": page["number"],
-                "width": page["size"][0],
-                "height": page["size"][1],
-                "source": page["source"],
-                "scan": bool(page.get("scan")),
-                "blocks": page["blocks"],
-            }
-    raise HTTPException(404, "no such page")
+    with job.lock:
+        doc = job.load_document()
+        page = _find_page(doc, number)
+        return _page_snapshot(page)
+
+
+@app.patch("/api/jobs/{job_id}/pages/{number}/blocks/{block_id}")
+def patch_block(
+    job_id: str, number: int, block_id: str, patch: BlockPatch
+) -> dict:
+    job = _editable_job(job_id)
+    with job.lock:
+        doc = job.load_document()
+        page = _find_page(doc, number)
+        if patch.rev != page.rev:
+            raise HTTPException(
+                409,
+                f"page changed since it was loaded (current rev {page.rev})",
+            )
+        block = next((item for item in page.blocks if item.id == block_id), None)
+        if block is None:
+            raise HTTPException(404, "no such block")
+        if block.type == "image":
+            raise HTTPException(422, "image blocks are read-only")
+
+        changes = patch.model_dump(exclude_unset=True)
+        changes.pop("rev", None)
+        if "runs" in changes and changes["runs"] is not None:
+            from pdfconv.model import Run
+
+            runs = [
+                Run(
+                    text=item["text"],
+                    bold=item.get("bold", False),
+                    italic=item.get("italic", False),
+                    font=item.get("font", ""),
+                    size=item.get("size", 0.0) or 0.0,
+                    color=item.get("color", "") or "",
+                )
+                for item in changes["runs"]
+            ]
+            block.runs = runs
+            block.text = "".join(run.text for run in runs)
+            changes.pop("runs", None)
+        for key, value in changes.items():
+            if key == "type" and value == "image":
+                raise HTTPException(422, "cannot turn a block into an image")
+            if key == "rows" and not value:
+                value = None
+            setattr(block, key, value)
+        block.edited = True
+        page.rev += 1
+        doc.save(job.model_path)
+        _mark_edited(job)
+        return _page_snapshot(page)
+
+
+@app.put("/api/jobs/{job_id}/pages/{number}/blocks")
+def replace_page_blocks(job_id: str, number: int, update: PageBlocksUpdate) -> dict:
+    """Replace a page's ordered block list (add, delete, reorder)."""
+    job = _editable_job(job_id)
+    with job.lock:
+        doc = job.load_document()
+        page = _find_page(doc, number)
+        if update.rev != page.rev:
+            raise HTTPException(
+                409,
+                f"page changed since it was loaded (current rev {page.rev})",
+            )
+
+        existing = {block.id: block for block in page.blocks if block.id}
+        blocks: list[Block] = []
+        used_ids: set[str] = set()
+
+        for index, payload in enumerate(update.blocks):
+            current = existing.pop(payload.id, None) if payload.id else None
+            if current is not None:
+                if current.type == "image" and payload.type != "image":
+                    raise HTTPException(422, "image blocks are read-only")
+                _apply_payload(current, payload)
+                current.edited = True
+                blocks.append(current)
+                used_ids.add(current.id)
+                continue
+
+            if payload.type == "image":
+                raise HTTPException(422, "cannot add an image block")
+            block = _new_block(payload, page, index)
+            while block.id in used_ids:
+                block.id = new_id()
+            used_ids.add(block.id)
+            blocks.append(block)
+
+        removed = list(page.removed)
+        for block in existing.values():
+            # Only real source content needs to be erased from the original
+            # PDF; blocks the user added never existed there.
+            if not block.added:
+                removed.append([round(value, 2) for value in block.bbox])
+
+        page.blocks = blocks
+        page.removed = removed
+        page.rev += 1
+        doc.save(job.model_path)
+        _mark_edited(job)
+        return _page_snapshot(page)
 
 
 # -- built frontend --------------------------------------------------------

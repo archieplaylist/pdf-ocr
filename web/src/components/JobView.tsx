@@ -301,6 +301,34 @@ function DownloadPanel({ job }: { job: Job }) {
               <DownloadIcon className="h-4 w-4" />
             </a>
           )}
+          <a
+            className="btn btn-ghost w-full justify-between border-line"
+            href={api.downloadUrl(job.id, "pdf")}
+            download
+          >
+            <span className="flex items-center gap-2">
+              <FileIcon className="h-4 w-4" />
+              {job.filename.replace(/\.pdf$/i, "")}.pdf
+              <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-muted">
+                rebuilt
+              </span>
+            </span>
+            <DownloadIcon className="h-4 w-4" />
+          </a>
+          <a
+            className="btn btn-ghost w-full justify-between border-line"
+            href={api.downloadUrl(job.id, "pdf-inplace")}
+            download
+          >
+            <span className="flex items-center gap-2">
+              <FileIcon className="h-4 w-4" />
+              {job.filename.replace(/\.pdf$/i, "")}-original.pdf
+              <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-muted">
+                original layout
+              </span>
+            </span>
+            <DownloadIcon className="h-4 w-4" />
+          </a>
           {job.formats.includes("xlsx") && (
             <a
               className="btn btn-ghost w-full justify-between border-line"
@@ -323,8 +351,10 @@ function DownloadPanel({ job }: { job: Job }) {
             <DownloadIcon className="h-3.5 w-3.5" />
           </a>
           <p className="pt-1 text-[11px] leading-relaxed text-muted">
-            DOCX keeps headings, paragraphs and real tables; low-confidence OCR
-            runs are highlighted in yellow.
+            Exports reflect the edits made on the page viewer.{" "}
+            <span className="font-medium">rebuilt</span> reflows text;{" "}
+            <span className="font-medium">original layout</span> keeps the
+            source page and only rewrites edited blocks.
           </p>
         </div>
       ) : (

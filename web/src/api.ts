@@ -90,9 +90,25 @@ export const api = {
   blocks: (id: string, page: number) =>
     request<PageModel>(`/jobs/${id}/pages/${page}/blocks`),
 
+  patchBlock: (id: string, page: number, blockId: string, patch: Record<string, unknown>) =>
+    request<PageModel>(`/jobs/${id}/pages/${page}/blocks/${blockId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+
+  replacePageBlocks: (id: string, page: number, payload: { rev: number; blocks: Record<string, unknown>[] }) =>
+    request<PageModel>(`/jobs/${id}/pages/${page}/blocks`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+
   previewUrl: (id: string, page: number, dpi: number) =>
     `${BASE}/jobs/${id}/pages/${page}/preview.png?dpi=${dpi}`,
 
-  downloadUrl: (id: string, format: string) =>
-    `${BASE}/jobs/${id}/download/${format}`,
+  downloadUrl: (id: string, format: string, mode?: string) => {
+    const base = `${BASE}/jobs/${id}/download/${format}`;
+    return mode ? `${base}?mode=${mode}` : base;
+  },
 };

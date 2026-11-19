@@ -21,11 +21,13 @@ from pathlib import Path
 import pymupdf
 
 from pdfconv.export_docx import write_docx
+from pdfconv.export_pdf import write_pdf_inplace, write_pdf_reflow
 from pdfconv.export_xlsx import write_xlsx
 from pdfconv.model import Document
 from pdfconv.pipeline import convert
 
-EXPORTERS = {"docx": write_docx, "xlsx": write_xlsx}
+EXPORTERS = {"docx": write_docx, "xlsx": write_xlsx, "pdf": write_pdf_reflow}
+ARTIFACT_FORMATS = ("docx", "xlsx", "pdf", "pdf-inplace")
 
 JOB_ROOT = Path(
     os.environ.get("PDFCONV_JOB_DIR", Path(tempfile.gettempdir()) / "pdfconv-jobs")
@@ -67,6 +69,9 @@ class Job:
     elapsed: float = 0.0
     mean_conf: float = 1.0
     error: str | None = None
+    edited: bool = False
+    # Serialises edits and artifact regeneration for this job.
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
     def pdf_path(self) -> Path:
@@ -79,7 +84,32 @@ class Job:
     def output_path(self, fmt: str) -> Path:
         if fmt == "json":
             return self.model_path
+        if fmt == "pdf-inplace":
+            return self.directory / f"{self.stem}-original.pdf"
         return self.directory / f"{self.stem}.{fmt}"
+
+    def load_document(self) -> Document:
+        return Document.load(self.model_path)
+
+    def render(self, fmt: str, target: Path | None = None) -> Path:
+        """Regenerate one artifact from the current (possibly edited) model."""
+        target = target or self.output_path(fmt)
+        doc = self.load_document()
+        if fmt == "docx":
+            write_docx(doc, target, layout=self.layout)
+        elif fmt == "xlsx":
+            write_xlsx(doc, target)
+        elif fmt == "pdf":
+            write_pdf_reflow(doc, target, layout=self.layout)
+        elif fmt == "pdf-inplace":
+            write_pdf_inplace(doc, target)
+        else:
+            raise ValueError(f"unknown format: {fmt}")
+        return target
+
+    def invalidate_artifacts(self) -> None:
+        for fmt in ARTIFACT_FORMATS:
+            self.output_path(fmt).unlink(missing_ok=True)
 
     def snapshot(self) -> dict:
         elapsed = self.elapsed
@@ -102,12 +132,17 @@ class Job:
             "sec_per_page": round(elapsed / max(self.pages_done, 1), 2),
             "mean_conf": round(self.mean_conf, 4),
             "error": self.error,
+            "edited": self.edited,
             "created": self.created,
             "updated": self.updated,
             "downloads": {
                 fmt: f"/api/jobs/{self.id}/download/{fmt}" for fmt in self.formats
             }
-            | ({"json": f"/api/jobs/{self.id}/download/json"}),
+            | {
+                "json": f"/api/jobs/{self.id}/download/json",
+                "pdf": f"/api/jobs/{self.id}/download/pdf",
+                "pdf-inplace": f"/api/jobs/{self.id}/download/pdf-inplace",
+            },
         }
 
 
@@ -282,9 +317,12 @@ class JobManager:
             for fmt in job.formats:
                 if fmt == "docx":
                     write_docx(doc, job.output_path(fmt), layout=job.layout)
+                elif fmt == "pdf":
+                    write_pdf_reflow(doc, job.output_path(fmt), layout=job.layout)
                 else:
                     EXPORTERS[fmt](doc, job.output_path(fmt))
             job.model_path.write_text(doc.to_json(), encoding="utf-8")
+            job.edited = doc.edited
         except JobCancelled:
             with self._lock:
                 job.status = "cancelled"

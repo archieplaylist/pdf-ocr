@@ -45,7 +45,11 @@ def write_docx(doc: Document, out: Path, layout: str = "auto") -> None:
     _configure_styles(dx)
     body = _body_size(doc, layout)
     pdf = None
-    if any(_is_image_page(p, layout) for p in doc.pages):
+    if any(_is_image_page(p, layout) for p in doc.pages) or any(
+        block.type == "image" and not block.image_data
+        for page in doc.pages
+        for block in page.blocks
+    ):
         pdf = pymupdf.open(doc.path)
 
     try:
@@ -63,8 +67,8 @@ def write_docx(doc: Document, out: Path, layout: str = "auto") -> None:
                 for block in page.blocks:
                     if block.type == "table" and block.rows:
                         _add_table(dx, block, body)
-                    elif block.type == "image" and block.image_data:
-                        _add_image(dx, block, page)
+                    elif block.type == "image":
+                        _add_image(dx, block, page, pdf)
                     elif block.text:
                         _add_text(dx, block, body, margin_left)
     finally:
@@ -86,6 +90,10 @@ def _configure_styles(dx) -> None:
 
 def _is_image_page(page, layout: str) -> bool:
     """True when this page should be written as a page-sized image."""
+    # A page the user edited is always rebuilt as text, otherwise the edit
+    # would be invisible in the export.
+    if getattr(page, "edited", False):
+        return False
     if layout == "facsimile":
         return True
     if layout != "auto":
@@ -101,7 +109,7 @@ def _body_size(doc: Document, layout: str) -> float:
         if _is_image_page(page, layout):
             continue
         for block in page.blocks:
-            if block.text and block.size > 0:
+            if block.plain_text and block.size > 0:
                 weights[round(block.size, 1)] += max(len(block.text), 1)
     return weights.most_common(1)[0][0] if weights else 10.5
 
@@ -167,7 +175,7 @@ def _add_image_page(dx, pdf, page) -> None:
 
 
 def _add_text(dx, block: Block, body: float, margin_left: float = 0.0) -> None:
-    text = block.text.strip()
+    text = block.plain_text.strip()
     if not text:
         return
     para = dx.add_paragraph()
@@ -193,23 +201,43 @@ def _add_text(dx, block: Block, body: float, margin_left: float = 0.0) -> None:
         else:
             fmt.tab_stops.add_tab_stop(Pt(max(6.0, stop - margin_left)))
 
-    run = para.add_run(text)
-    _style_run(run, block, body)
-    if block.type in ("title", "heading"):
-        run.bold = True
-    if block.color:
-        try:
-            run.font.color.rgb = RGBColor.from_string(block.color.lstrip("#"))
-        except Exception:
-            pass
-    if block.conf < LOW_CONF:
-        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+    if block.runs:
+        for run in block.runs:
+            r = para.add_run(run.text)
+            _style_run(r, block, body)
+            r.bold = (run.bold if run.bold is not None else block.bold) or block.type in ("title", "heading")
+            r.italic = run.italic if run.italic is not None else block.italic
+            if run.font:
+                r.font.name = _font_name(run.font)
+            if run.size:
+                r.font.size = Pt(round(min(max(run.size, 6.0), 72.0), 1))
+            if run.color:
+                try:
+                    r.font.color.rgb = RGBColor.from_string(run.color.lstrip("#"))
+                except Exception:
+                    pass
+            if block.conf < LOW_CONF:
+                r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+    else:
+        run = para.add_run(text)
+        _style_run(run, block, body)
+        if block.type in ("title", "heading"):
+            run.bold = True
+        if block.color:
+            try:
+                run.font.color.rgb = RGBColor.from_string(block.color.lstrip("#"))
+            except Exception:
+                pass
+        if block.conf < LOW_CONF:
+            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
 
-def _add_image(dx, block: Block, page) -> None:
-    if not block.image_data:
-        return
+def _add_image(dx, block: Block, page, pdf=None) -> None:
     from io import BytesIO
+
+    data = block.image_data or _crop_image(pdf, page, block)
+    if not data:
+        return
 
     para = dx.add_paragraph()
     fmt = para.paragraph_format
@@ -218,11 +246,29 @@ def _add_image(dx, block: Block, page) -> None:
     fmt.line_spacing = 1.0
     run = para.add_run()
     try:
-        stream = BytesIO(block.image_data)
+        stream = BytesIO(data)
         # Scale to fit printable width (~470pt) while keeping aspect ratio.
         run.add_picture(stream, width=Pt(min(block.bbox[2] - block.bbox[0], 470.0)))
     except Exception:
         return
+
+
+def _crop_image(pdf, page, block: Block) -> bytes | None:
+    """Recover an image block from the source PDF after a JSON round-trip.
+
+    ``model.json`` deliberately does not store image bytes. When a document is
+    re-exported after an edit, the picture is re-rendered from its bbox instead.
+    """
+    if pdf is None:
+        return None
+    try:
+        rect = pymupdf.Rect(block.bbox)
+        if rect.is_empty:
+            return None
+        pix = pdf[page.number - 1].get_pixmap(clip=rect, dpi=200, alpha=False)
+        return pix.tobytes("png")
+    except Exception:
+        return None
 
 
 def _style_run(run, block: Block, body: float) -> None:
