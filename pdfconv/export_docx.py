@@ -12,7 +12,7 @@ import pymupdf
 from docx import Document as DocxDocument
 from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
@@ -59,14 +59,14 @@ def write_docx(doc: Document, out: Path, layout: str = "auto") -> None:
                 _set_page_geometry(section, page, margins=0)
                 _add_image_page(dx, pdf, page)
             else:
-                _set_page_geometry(section, page)
+                margin_left = _set_page_geometry(section, page)
                 for block in page.blocks:
                     if block.type == "table" and block.rows:
                         _add_table(dx, block, body)
                     elif block.type == "image" and block.image_data:
                         _add_image(dx, block, page)
                     elif block.text:
-                        _add_text(dx, block, body)
+                        _add_text(dx, block, body, margin_left)
     finally:
         if pdf is not None:
             pdf.close()
@@ -106,7 +106,7 @@ def _body_size(doc: Document, layout: str) -> float:
     return weights.most_common(1)[0][0] if weights else 10.5
 
 
-def _set_page_geometry(section, page, margins: float | None = None) -> None:
+def _set_page_geometry(section, page, margins: float | None = None) -> float:
     section.page_width = Pt(page.width)
     section.page_height = Pt(page.height)
     if margins is not None:
@@ -116,7 +116,7 @@ def _set_page_geometry(section, page, margins: float | None = None) -> None:
         section.bottom_margin = Pt(margins)
         section.header_distance = Pt(0)
         section.footer_distance = Pt(0)
-        return
+        return margins
 
     left, right = _margins(page)
     section.left_margin = Pt(left)
@@ -125,6 +125,7 @@ def _set_page_geometry(section, page, margins: float | None = None) -> None:
     section.bottom_margin = Pt(56.7)
     section.header_distance = Pt(18)
     section.footer_distance = Pt(18)
+    return left
 
 
 def _margins(page) -> tuple[float, float]:
@@ -165,7 +166,7 @@ def _add_image_page(dx, pdf, page) -> None:
     )
 
 
-def _add_text(dx, block: Block, body: float) -> None:
+def _add_text(dx, block: Block, body: float, margin_left: float = 0.0) -> None:
     text = block.text.strip()
     if not text:
         return
@@ -179,6 +180,18 @@ def _add_text(dx, block: Block, body: float) -> None:
     para.alignment = _ALIGNMENTS.get(block.align, WD_ALIGN_PARAGRAPH.LEFT)
     if block.indent:
         fmt.left_indent = Pt(block.indent)
+    # Label/value rows are stored with a tab; put the stop where the value sat
+    # on the page instead of letting Word use its default half-inch grid. The
+    # final segment gets a right tab at the line's right edge: same position,
+    # but it cannot wrap past the margin.
+    stops = block.tab_stops or []
+    for index, stop in enumerate(stops):
+        if index == len(stops) - 1:
+            fmt.tab_stops.add_tab_stop(
+                Pt(max(6.0, block.bbox[2] - margin_left)), WD_TAB_ALIGNMENT.RIGHT
+            )
+        else:
+            fmt.tab_stops.add_tab_stop(Pt(max(6.0, stop - margin_left)))
 
     run = para.add_run(text)
     _style_run(run, block, body)

@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from pdfconv.ocr import TESSERACT
+from pdfconv.ocr_engine import available_engines
 
 from .jobs import EXPORTERS, JOB_ROOT, JobLimitError, JobManager
 
@@ -78,7 +79,9 @@ def _get_job(job_id: str):
     return job
 
 
-def _check_options(formats: str, dpi: int, lang: str, layout: str) -> list[str]:
+def _check_options(
+    formats: str, dpi: int, lang: str, layout: str, engine: str
+) -> list[str]:
     requested = [part.strip().lower() for part in formats.split(",") if part.strip()]
     if not requested:
         raise HTTPException(422, "choose at least one output format")
@@ -91,6 +94,8 @@ def _check_options(formats: str, dpi: int, lang: str, layout: str) -> list[str]:
         raise HTTPException(422, "invalid language list")
     if layout not in ("auto", "flow", "facsimile"):
         raise HTTPException(422, "layout must be auto, flow or facsimile")
+    if engine not in ("auto", "tesseract", "rapidocr"):
+        raise HTTPException(422, "engine must be auto, tesseract or rapidocr")
     return list(dict.fromkeys(requested))
 
 
@@ -123,6 +128,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "tesseract": bool(TESSERACT),
+        "engines": available_engines(),
         "max_upload_mb": MAX_UPLOAD_MB,
     }
 
@@ -161,8 +167,9 @@ async def create_job(
     dpi: int = Form(300),
     lang: str = Form("ind+eng"),
     layout: str = Form("auto"),
+    engine: str = Form("auto"),
 ) -> dict:
-    requested = _check_options(formats, dpi, lang, layout)
+    requested = _check_options(formats, dpi, lang, layout, engine)
 
     if file is not None and file.filename:
         destination = _incoming_path()
@@ -176,6 +183,7 @@ async def create_job(
                 dpi=dpi,
                 lang=lang,
                 layout=layout,
+                engine=engine,
             )
         except ValueError as exc:
             destination.unlink(missing_ok=True)
@@ -199,6 +207,7 @@ async def create_job(
                 dpi=dpi,
                 lang=lang,
                 layout=layout,
+                engine=engine,
             )
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc

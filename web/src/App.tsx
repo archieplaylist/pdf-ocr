@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api";
-import type { Fixture, Health, Job, Layout } from "./types";
+import type { Fixture, Health, Job, Layout, OcrEngine } from "./types";
 import { JobView } from "./components/JobView";
 import { SetupView } from "./components/SetupView";
 import { SiteHeader } from "./components/SiteHeader";
@@ -48,6 +48,7 @@ export default function App() {
   const [dpi, setDpi] = useState(300);
   const [lang, setLang] = useState("ind+eng");
   const [layout, setLayout] = useState<Layout>("auto");
+  const [engine, setEngine] = useState<OcrEngine>("auto");
 
   const [job, setJob] = useState<Job | null>(null);
   const [starting, setStarting] = useState(false);
@@ -191,6 +192,7 @@ export default function App() {
         dpi,
         lang: lang.trim() || "ind+eng",
         layout,
+        engine,
       });
       setJob(await api.job(created.id));
     } catch (caught) {
@@ -243,6 +245,8 @@ export default function App() {
             onLang={setLang}
             layout={layout}
             onLayout={setLayout}
+            engine={engine}
+            onEngine={setEngine}
             onConvert={start}
             starting={starting}
             canConvert={Boolean(file ?? fixture)}

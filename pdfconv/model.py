@@ -22,6 +22,7 @@ class Block:
     color: str = ""  # hex like #rrggbb
     indent: float = 0.0
     space_before: float = 0.0
+    tab_stops: list[float] | None = None
     col_widths: list[float] | None = None
     # Image payload (not serialized to JSON).
     image_data: bytes | None = field(default=None, repr=False)

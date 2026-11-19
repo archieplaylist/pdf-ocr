@@ -54,6 +54,7 @@ export interface CreateJobInput {
   dpi: number;
   lang: string;
   layout: string;
+  engine: string;
 }
 
 export const api = {
@@ -70,6 +71,7 @@ export const api = {
     form.append("dpi", String(input.dpi));
     form.append("lang", input.lang);
     form.append("layout", input.layout);
+    form.append("engine", input.engine);
     return request<{ id: string; status: string }>("/jobs", {
       method: "POST",
       body: form,

@@ -57,6 +57,7 @@ class Job:
     updated: float
     directory: Path
     layout: str = "auto"
+    engine: str = "auto"
     status: str = "queued"  # queued | running | done | error | cancelled
     cancelled: bool = False
     pages_total: int = 0
@@ -93,6 +94,7 @@ class Job:
             "dpi": self.dpi,
             "lang": self.lang,
             "layout": self.layout,
+            "engine": self.engine,
             "pages_total": self.pages_total,
             "pages_done": self.pages_done,
             "pages": list(self.pages),
@@ -141,6 +143,7 @@ class JobManager:
         dpi: int,
         lang: str,
         layout: str = "auto",
+        engine: str = "auto",
     ) -> Job:
         pdf_path = Path(pdf_path)
         with self._lock:
@@ -164,6 +167,7 @@ class JobManager:
             dpi=dpi,
             lang=lang,
             layout=layout,
+            engine=engine,
             created=now,
             updated=now,
             directory=JOB_ROOT / uuid.uuid4().hex[:12],
@@ -269,7 +273,11 @@ class JobManager:
 
         try:
             doc: Document = convert(
-                job.pdf_path, dpi=job.dpi, lang=job.lang, on_page=on_page
+                job.pdf_path,
+                dpi=job.dpi,
+                lang=job.lang,
+                on_page=on_page,
+                engine=job.engine,
             )
             for fmt in job.formats:
                 if fmt == "docx":

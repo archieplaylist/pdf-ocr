@@ -1,4 +1,4 @@
-import type { Layout } from "../types";
+import type { Layout, OcrEngine } from "../types";
 import { ArrowRightIcon, CheckIcon, SpinnerIcon } from "./Icons";
 
 interface Props {
@@ -10,6 +10,8 @@ interface Props {
   onLang: (lang: string) => void;
   layout: Layout;
   onLayout: (layout: Layout) => void;
+  engine: OcrEngine;
+  onEngine: (engine: OcrEngine) => void;
   onConvert: () => void;
   starting: boolean;
   canConvert: boolean;
@@ -34,6 +36,26 @@ const FORMATS = [
 
 const DPI_OPTIONS = [150, 200, 300, 400];
 const LANGS = ["ind+eng", "eng", "ind"];
+
+const ENGINES: { value: OcrEngine; title: string; blurb: string }[] = [
+  {
+    value: "auto",
+    title: "Auto",
+    blurb:
+      "RapidOCR (PP-OCRv6) when installed, otherwise Tesseract. Best default for real scans.",
+  },
+  {
+    value: "rapidocr",
+    title: "RapidOCR",
+    blurb:
+      "PP-OCRv6 ONNX models. Strongest on phone photos, skew and low contrast; runs offline on CPU.",  },
+  {
+    value: "tesseract",
+    title: "Tesseract",
+    blurb:
+      "System Tesseract 5 with word-level confidence. Fast on clean, straight scans.",
+  },
+];
 
 const LAYOUTS: { value: Layout; title: string; blurb: string }[] = [
   {
@@ -63,6 +85,8 @@ export function OptionsPanel({
   onLang,
   layout,
   onLayout,
+  engine,
+  onEngine,
   onConvert,
   starting,
   canConvert,
@@ -195,6 +219,43 @@ export function OptionsPanel({
         </p>
       </div>
 
+      <div className="mt-4 border-t border-line pt-4">
+        <div className="flex items-center justify-between gap-3">
+          <span className="label" id="engine-label">
+            OCR engine
+          </span>
+          <span className="font-mono text-[10px] text-muted">scanned pages only</span>
+        </div>
+        <div
+          role="radiogroup"
+          aria-labelledby="engine-label"
+          className="mt-2 grid grid-cols-3 gap-1 rounded-lg border border-line bg-paper p-1"
+        >
+          {ENGINES.map((option) => {
+            const on = engine === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                onClick={() => onEngine(option.value)}
+                className={`rounded-md px-1 py-1.5 text-xs transition-colors ${
+                  on
+                    ? "bg-ink text-paper"
+                    : "text-muted hover:bg-panel-2 hover:text-ink"
+                }`}
+              >
+                {option.title}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-xs leading-relaxed text-muted">
+          {ENGINES.find((option) => option.value === engine)?.blurb}
+        </p>
+      </div>
+
       <div className="mt-4">
         <label className="label" htmlFor="lang">
           OCR languages
@@ -225,7 +286,8 @@ export function OptionsPanel({
           </div>
         </div>
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          Tesseract language packs must be installed on the server.
+          Tesseract language packs must be installed on the server. RapidOCR's
+          PP-OCRv6 model covers Indonesian and English without language packs.
         </p>
       </div>
 

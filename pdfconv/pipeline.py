@@ -12,6 +12,7 @@ from .detect import page_is_scan, page_source
 from .extract import extract_native
 from .model import Document, Page
 from .ocr import ocr_page
+from .ocr_engine import get_engine
 
 PageCallback = Callable[[Page, float], None]
 
@@ -43,6 +44,7 @@ def convert(
     dpi: int = 300,
     lang: str = "ind+eng",
     on_page: PageCallback | None = None,
+    engine: str | None = None,
 ) -> Document:
     """Convert *path* into the intermediate model.
 
@@ -66,7 +68,9 @@ def convert(
             # it, so flow layout still gets readable text.
             source = "ocr" if scan else page_source(page)
             blocks = (
-                extract_native(page) if source == "native" else ocr_page(page, dpi, lang)
+                extract_native(page)
+                if source == "native"
+                else ocr_page(page, dpi, lang, engine=get_engine(engine))
             )
             result = Page(
                 number=number,

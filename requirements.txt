@@ -6,6 +6,11 @@ opencv-python-headless>=4.9
 numpy>=1.26
 reportlab>=4.0
 
+# OCR: PP-OCRv6 models via onnxruntime. Small models ship inside the wheel,
+# so this stays fully offline. Tesseract remains an optional second engine.
+rapidocr>=3.10
+onnxruntime>=1.17
+
 # Web layer
 fastapi>=0.115
 uvicorn[standard]>=0.30

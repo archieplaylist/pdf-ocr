@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import statistics
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .model import Block
 
@@ -20,6 +20,7 @@ class Line:
     color: str = ""
     conf: float = 1.0
     group: int | None = None
+    tab_stops: list[float] = field(default_factory=list)
 
     @property
     def x0(self) -> float:
@@ -156,6 +157,7 @@ def merge_lines_to_blocks(
     heading_ratio: float = 1.12,
     title_ratio: float = 1.5,
     column: tuple[float, float] | None = None,
+    break_on_short: bool = False,
 ) -> list[Block]:
     """Greedy line->paragraph merge, then classify by size."""
     lines = [ln for ln in lines if ln.text.strip()]
@@ -164,6 +166,7 @@ def merge_lines_to_blocks(
     lines = _order_rows(lines)
 
     base = body_size(lines)
+    column_width = max(column[1] - column[0], 1.0) if column else 0.0
     paras: list[tuple[list[Line], bool]] = []
     cur: list[Line] = [lines[0]]
     for prev, ln in zip(lines, lines[1:]):
@@ -178,6 +181,18 @@ def merge_lines_to_blocks(
             or not same_style
             or (ln.group is not None and prev.group is not None and ln.group != prev.group)
             or abs(ln.x0 - prev.x0) > 2.5 * line_h
+            # A label/value row ends the paragraph: the next field is a new
+            # paragraph, not a continuation of this one.
+            or bool(prev.tab_stops)
+            or bool(ln.tab_stops)
+            # OCR has no paragraph marks. A line that stops well before the
+            # right edge is a hard break (address line, list item), not a
+            # wrapped line.
+            or (
+                break_on_short
+                and column is not None
+                and column[1] - prev.bbox[2] > 0.20 * column_width
+            )
         )
         if breaking:
             paras.append((cur, _standalone(cur, base, heading_ratio)))
@@ -212,6 +227,7 @@ def merge_lines_to_blocks(
         font = fonts.most_common(1)[0][0] if fonts else ""
         colors = Counter(l.color for l in group if l.color)
         color = colors.most_common(1)[0][0] if colors else ""
+        tabs = next((l.tab_stops for l in group if l.tab_stops), [])
         blocks.append(
             Block(
                 type=kind,
@@ -219,11 +235,18 @@ def merge_lines_to_blocks(
                 text=text,
                 size=size,
                 conf=conf,
-                align=_align(bbox, column, max(l.height for l in group)),
+                # A row with tab stops already reproduces the original x
+                # positions; centring it would move the label and the value.
+                align=(
+                    "left"
+                    if tabs
+                    else _align(bbox, column, max(l.height for l in group))
+                ),
                 bold=bold,
                 italic=italic,
                 font=font,
                 color=color,
+                tab_stops=tabs or None,
             )
         )
     return blocks

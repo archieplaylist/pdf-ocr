@@ -22,6 +22,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dpi", type=int, default=300, help="OCR render DPI (default 300)")
     ap.add_argument("--lang", default="ind+eng", help="tesseract languages")
     ap.add_argument(
+        "--ocr-engine",
+        default=None,
+        choices=("auto", "tesseract", "rapidocr"),
+        help="OCR backend (default: rapidocr when installed, else tesseract)",
+    )
+    ap.add_argument(
         "--layout",
         default="auto",
         choices=("auto", "flow", "facsimile"),
@@ -41,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
 
     started = time.perf_counter()
     try:
-        doc = convert(args.input, dpi=args.dpi, lang=args.lang)
+        doc = convert(args.input, dpi=args.dpi, lang=args.lang, engine=args.ocr_engine)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

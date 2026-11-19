@@ -1,4 +1,4 @@
-import type { Fixture, Layout } from "../types";
+import type { Fixture, Layout, OcrEngine } from "../types";
 import { fixtureLabel } from "../format";
 import { Dropzone } from "./Dropzone";
 import { OptionsPanel } from "./OptionsPanel";
@@ -19,6 +19,8 @@ interface Props {
   onLang: (lang: string) => void;
   layout: Layout;
   onLayout: (layout: Layout) => void;
+  engine: OcrEngine;
+  onEngine: (engine: OcrEngine) => void;
   onConvert: () => void;
   starting: boolean;
   canConvert: boolean;
@@ -162,6 +164,8 @@ export function SetupView(props: Props) {
           onLang={props.onLang}
           layout={props.layout}
           onLayout={props.onLayout}
+          engine={props.engine}
+          onEngine={props.onEngine}
           onConvert={props.onConvert}
           starting={props.starting}
           canConvert={props.canConvert}

@@ -2,10 +2,12 @@ export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 export type PageSource = "native" | "ocr";
 export type BlockType = "title" | "heading" | "para" | "table";
 export type Layout = "auto" | "flow" | "facsimile";
+export type OcrEngine = "auto" | "tesseract" | "rapidocr";
 
 export interface Health {
   status: string;
   tesseract: boolean;
+  engines?: Record<string, boolean>;
   max_upload_mb: number;
 }
 

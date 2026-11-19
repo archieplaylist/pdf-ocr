@@ -11,10 +11,18 @@ web app share exactly one pipeline.
 
 - **Per-page routing.** A page with an embedded text layer is extracted
   directly (fast, exact). Scanned pages are rendered at the chosen DPI,
-  deskewed, binarised and OCR'd with Tesseract — an existing text layer on a
-  scan is ignored, because it is usually poorer than a fresh OCR pass.
-- **Ruled tables.** Grid lines are found with OpenCV morphology; cells are
-  OCR'd in parallel with PSM 7 and rebuilt as real tables.
+  deskewed, binarised and OCR'd — an embedded text layer on a scan is ignored,
+  because it is usually poorer than a fresh OCR pass.
+- **Two local OCR engines.** RapidOCR (PP-OCRv6 ONNX, bundled models) is the
+  default; Tesseract 5 stays available as a lighter fallback. Both feed the
+  same layout/table pipeline.
+- **Ruled tables.** Grid lines are found with OpenCV morphology; the table
+  region is read in one OCR pass and line boxes are assigned to cells, so
+  wrapped cell text and lone digits next to a rule survive.
+- **Stable OCR typography.** OCR engines report glyph boxes, not font sizes, so
+  box heights are normalised against the page's body text and snapped to a
+  small set of levels. Labels and values on one visual row are kept together
+  with tab stops at their measured positions.
 - **DOCX with structure.** Editable flow layout — headings, paragraphs and
   tables — with low-confidence OCR runs highlighted in yellow. A scanned page
   can instead be kept as a page-sized image so the output looks like the
@@ -55,10 +63,11 @@ docker compose up --build
 # http://localhost:8000
 ```
 
-The image builds the React app, installs Tesseract with `eng` + `ind` data,
-and runs as an unprivileged user with a healthcheck. Job data lives in the
-`pdfconv-jobs` volume and expires after an hour. The NixOS `LD_LIBRARY_PATH`
-wrapper is not needed inside the container.
+The image builds the React app, installs the OCR stack (RapidOCR models ship
+inside the Python wheel; Tesseract is kept for page orientation and the
+fallback engine), and runs as an unprivileged user with a healthcheck. Job data
+lives in the `pdfconv-jobs` volume and expires after an hour. The NixOS
+`LD_LIBRARY_PATH` wrapper is not needed inside the container.
 
 ### Local development
 
@@ -122,7 +131,8 @@ uvicorn worker (the Docker image does).
 
 `POST /api/jobs` fields: `file` **or** `fixture`, `formats` (comma-separated
 `docx,xlsx`), `dpi` (72–600, default 300), `lang` (Tesseract language list,
-default `ind+eng`), `layout` (`auto`, `flow`, `facsimile`; default `auto`).
+default `ind+eng`), `layout` (`auto`, `flow`, `facsimile`; default `auto`),
+`engine` (`auto`, `rapidocr`, `tesseract`; default `auto`).
 `auto` rebuilds pages that have real text and keeps scanned pages as images;
 `flow` always rebuilds every page as editable text; `facsimile` inserts every
 page as a page image. JSON is always available from the job's model.
@@ -138,6 +148,8 @@ Configuration:
 | `JOB_TTL_MIN` | `60` | minutes before finished jobs are deleted |
 | `MAX_WORKERS` | `2` | concurrent conversions |
 | `MAX_ACTIVE_JOBS` | `4` | queued + running jobs accepted |
+| `PDFCONV_OCR_ENGINE` | `auto` | default engine: `auto`, `rapidocr`, `tesseract` |
+| `PDFCONV_OCR_MAX_SIDE` | `2000` | detector downscale ceiling; `4096` = max accuracy, ~1.7 s/page more |
 | `CORS_ORIGINS` | `localhost:5173`, `127.0.0.1:5173` | comma-separated dev origins |
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | bind address for `./py -m api` |
 | `RELOAD` | off | auto-reload for local development |
@@ -169,18 +181,23 @@ docs/      screenshots used by this README
 
 ```
 pymupdf python-docx openpyxl opencv-python-headless numpy reportlab
+rapidocr onnxruntime
 fastapi uvicorn[standard] python-multipart
 ```
 
 Test extras: `pytest`, `httpx`. Frontend: `cd web && npm install`.
 
-OCR uses the system `tesseract` binary (language data for `ind` and `eng` are
-required). On NixOS, `nix-shell -p tesseract` provides both.
+Scanned pages use RapidOCR with the small PP-OCRv6 ONNX models by default
+(included in the wheel, fully offline, CPU only). Tesseract 5 is optional: it
+is used for page-orientation detection and as `--ocr-engine tesseract`. On
+NixOS, `nix-shell -p tesseract` provides the binary and `ind`/`eng` data.
+`--lang` only applies to the Tesseract engine; the PP-OCRv6 model is
+multi-language (Indonesian, English and most Latin-script languages).
 
 ## Usage (CLI)
 
 ```
-pdfconv in.pdf --to docx,xlsx --out out/ [--dpi 300] [--lang ind+eng] [--layout auto|flow|facsimile] [--json model.json]
+pdfconv in.pdf --to docx,xlsx --out out/ [--dpi 300] [--lang ind+eng] [--layout auto|flow|facsimile] [--ocr-engine auto|rapidocr|tesseract] [--json model.json]
 ```
 
 - Native pages are copied exactly; scanned pages go through deskew, binarise
@@ -204,6 +221,33 @@ pdfconv in.pdf --to docx,xlsx --out out/ [--dpi 300] [--lang ind+eng] [--layout 
 | doc3 clean scan (OCR)  | 0.00%  | 0.00%  | 1.04   | n/a         |
 | doc4 phone photo (OCR) | 0.00%  | 0.00%  | 2.38   | 25/25       |
 | doc5 mixed PDF         | 0.00%  | 0.00%  | 0.44   | n/a         |
+
+## OCR engine comparison
+
+Synthetic fixtures are too clean to separate OCR engines (all of them score
+0.00%). The engines were therefore measured on a real 300 DPI Indonesian scan
+(a work-permit letter with a ruled table and a wrapped cell) plus five
+degraded copies of the same page. CER/WER against a hand-checked
+transcription, same preprocessing, layout merge and table code:
+
+| Variant | Tesseract CER | RapidOCR CER | Tesseract s/page | RapidOCR s/page |
+|---|---:|---:|---:|---:|
+| original 300 DPI | 4.89% | **3.98%** | 11.2 | 5.5 |
+| 2° rotation | 8.65% | **4.74%** | 9.6 | 3.4 |
+| JPEG q35 | 6.17% | **3.98%** | 14.8 | 6.3 |
+| 150 DPI source | 7.37% | **3.91%** | 15.2 | 4.5 |
+| perspective warp | 15.79% | **3.68%** | 12.6 | 4.3 |
+| low contrast | 12.48% | **3.98%** | 15.7 | 5.2 |
+| **mean** | 9.22% | **4.05%** | 13.2 | 4.9 |
+
+RapidOCR wins on every variant and is ~2.7× faster; the gap widens exactly
+where Tesseract struggles (rotation, perspective, low contrast). Tesseract is
+only marginally behind on a perfectly straight scan, which is why it stays
+selectable with `--ocr-engine tesseract`.
+
+`PDFCONV_OCR_MAX_SIDE=4096` improves small-text detection further (3.61% CER
+on the same page, +1.7 s/page). It is not the default because it pushes
+300 DPI pages over the 5 s/page budget on this hardware.
 
 ## Known limits
 

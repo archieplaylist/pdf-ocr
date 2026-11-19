@@ -43,6 +43,7 @@ def test_health(client: TestClient):
     body = client.get("/api/health").json()
     assert body["status"] == "ok"
     assert body["tesseract"] is True
+    assert body["engines"]["rapidocr"] is True
     assert body["max_upload_mb"] > 0
 
 
@@ -100,6 +101,16 @@ def test_scan_fixture_uses_ocr(client: TestClient):
     assert client.get(f"/api/jobs/{job['id']}/download/json").status_code == 200
 
 
+def test_tesseract_engine_is_selectable(client: TestClient):
+    created = create(
+        client, fixture="doc3_scan_clean", formats="docx", engine="tesseract"
+    )
+    job = wait_for(client, created["id"])
+    assert job["status"] == "done", job["error"]
+    assert job["engine"] == "tesseract"
+    assert job["pages"][0]["source"] == "ocr"
+
+
 def test_facsimile_layout_embeds_page_image(client: TestClient):
     created = create(
         client, fixture="doc3_scan_clean", formats="docx", layout="facsimile"
@@ -150,6 +161,7 @@ def test_uploaded_pdf(client: TestClient):
         {"formats": "docx", "dpi": "10"},
         {"formats": "docx", "lang": "bad lang!"},
         {"formats": "docx", "layout": "boxes"},
+        {"formats": "docx", "engine": "magic"},
         {},
     ],
 )

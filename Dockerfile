@@ -15,8 +15,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PDFCONV_JOB_DIR=/data/jobs
 
-# tesseract-ocr-ind provides the Indonesian language data the default
-# "ind+eng" pipeline expects. libglib/libgomp/libfreetype back the wheels.
+# Tesseract stays for page-orientation (OSD) detection and as the fallback
+# recognition engine; the default RapidOCR/PP-OCRv6 models ship in the wheel
+# installed from requirements.txt, so no model download happens at runtime.
+# tesseract-ocr-ind provides the Indonesian language data for "--ocr-engine
+# tesseract" with the default "ind+eng" list. libglib/libgomp/libfreetype
+# back the wheels.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         tesseract-ocr \
