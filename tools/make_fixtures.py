@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 import cv2
-import fitz
+import pymupdf
 import numpy as np
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
@@ -290,8 +290,8 @@ def write_text_pdf(path: Path, blocks, title_size: int = 18) -> None:
 
 
 def rasterize(src: Path, dpi: int = 300) -> np.ndarray:
-    doc = fitz.open(src)
-    pix = doc[0].get_pixmap(dpi=dpi, colorspace=fitz.csGRAY)
+    doc = pymupdf.open(src)
+    pix = doc[0].get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
     doc.close()
     return img.copy()
@@ -300,11 +300,11 @@ def rasterize(src: Path, dpi: int = 300) -> np.ndarray:
 def image_to_pdf(img: np.ndarray, path: Path, dpi: int = 300) -> None:
     ok, buf = cv2.imencode(".png", img)
     assert ok
-    doc = fitz.open()
+    doc = pymupdf.open()
     w_pt = img.shape[1] * 72.0 / dpi
     h_pt = img.shape[0] * 72.0 / dpi
     page = doc.new_page(width=w_pt, height=h_pt)
-    page.insert_image(fitz.Rect(0, 0, w_pt, h_pt), stream=buf.tobytes())
+    page.insert_image(pymupdf.Rect(0, 0, w_pt, h_pt), stream=buf.tobytes())
     doc.save(str(path))
     doc.close()
 
@@ -339,8 +339,8 @@ def phone_photo(img: np.ndarray, rng: np.random.Generator) -> np.ndarray:
 
 
 def write_mixed_pdf(native: Path, scanned: Path, out: Path) -> None:
-    doc = fitz.open(native)
-    img_doc = fitz.open(scanned)
+    doc = pymupdf.open(native)
+    img_doc = pymupdf.open(scanned)
     doc.insert_pdf(img_doc, from_page=0, to_page=0)
     doc.save(str(out))
     doc.close()
@@ -407,7 +407,7 @@ def main() -> None:
 
     print("fixtures written:")
     for p in sorted(FIX.glob("*.pdf")):
-        d = fitz.open(p)
+        d = pymupdf.open(p)
         print(f"  {p.name:28s} {len(d)} page(s), text layer: {bool(d[0].get_text().strip())}")
         d.close()
 

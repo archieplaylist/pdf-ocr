@@ -291,6 +291,8 @@ def _region_table(img):
             if len(cols) >= 3 and (cols[-1] - cols[0]) >= w * 0.2:
                 return cand, cols
     return None
+
+
 def detect_grid(img):
     """Find ruled-table row/column line positions (pixels)."""
     h, w = img.shape

@@ -54,9 +54,12 @@ def convert(
     """
     path = Path(path)
     pdf = pymupdf.open(str(path))
-    if pdf.needs_pass:
+    try:
+        if pdf.needs_pass:
+            raise ValueError(f"{path.name}: password-protected PDF is not supported")
+    except ValueError:
         pdf.close()
-        raise ValueError(f"{path.name}: password-protected PDF is not supported")
+        raise
 
     pages: list[Page] = []
     try:

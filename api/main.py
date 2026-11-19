@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from pdfconv.model import Block, Document, Page, new_id
+from pdfconv.model import Block, Document, Page, Run, new_id
 from pdfconv.ocr import TESSERACT
 from pdfconv.ocr_engine import available_engines
 
@@ -305,8 +305,6 @@ def _apply_payload(block: Block, payload: BlockPayload) -> None:
     if payload.conf is not None:
         block.conf = payload.conf
     if payload.runs is not None:
-        from pdfconv.model import Run
-
         block.runs = [
             Run(
                 text=item.text,
@@ -608,8 +606,6 @@ def patch_block(
         changes = patch.model_dump(exclude_unset=True)
         changes.pop("rev", None)
         if "runs" in changes and changes["runs"] is not None:
-            from pdfconv.model import Run
-
             runs = [
                 Run(
                     text=item["text"],

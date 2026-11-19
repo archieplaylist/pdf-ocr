@@ -405,33 +405,6 @@ export function PageViewer({ job, page, onPage }: Props) {
       .join("");
   }, [model, viewMode, editorMode]);
 
-  // Sync editor DOM when model loads/changes externally (not while focused).
-  useEffect(() => {
-    if (!model || !editorRef.current || viewMode !== "document" || editorMode !== "edit") return;
-    if (focusedRef.current) return;
-    const container = editorRef.current;
-    container.innerHTML = model.blocks
-      .map((block) => {
-        if (block.type === "table") {
-          const rows = (block.rows || [])
-            .map(
-              (row) =>
-                `<tr>${row
-                  .map((cell) => `<td contenteditable="true" style="border:1px solid #999;padding:2px 4px;">${escapeHtml(cell)}</td>`)
-                  .join("")}</tr>`,
-            )
-            .join("");
-          return `<table data-block-id="${block.id}" data-block-type="table" style="border-collapse:collapse;width:100%;margin:6px 0;">${rows}</table>`;
-        }
-        const tag =
-          block.type === "title" ? "h1" : block.type === "heading" ? "h2" : "p";
-        const align = block.align ? `text-align:${block.align};` : "";
-        const size = block.size ? `font-size:${block.size}px;` : "";
-        return `<${tag} data-block-id="${block.id}" data-block-type="${block.type}" style="${align}${size}margin:4px 0;">${runsToHtml(block)}</${tag}>`;
-      })
-      .join("");
-  }, [model, viewMode, editorMode]);
-
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

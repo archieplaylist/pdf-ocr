@@ -251,6 +251,7 @@ class RapidEngine:
 
 _ENGINES = {"tesseract": TesseractEngine, "rapidocr": RapidEngine}
 _CACHE: dict[str, object] = {}
+_CACHE_LOCK = threading.Lock()
 
 
 def available_engines() -> dict[str, bool]:
@@ -281,6 +282,7 @@ def get_engine(name: str | None = None):
         raise OcrError(
             f"unknown OCR engine {wanted!r}; choose from {', '.join(_ENGINES)}"
         )
-    if wanted not in _CACHE:
-        _CACHE[wanted] = _ENGINES[wanted]()
-    return _CACHE[wanted]
+    with _CACHE_LOCK:
+        if wanted not in _CACHE:
+            _CACHE[wanted] = _ENGINES[wanted]()
+        return _CACHE[wanted]

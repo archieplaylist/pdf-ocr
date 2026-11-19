@@ -226,9 +226,6 @@ def _load_runs(raw) -> list[Run] | None:
             )
         )
     return out or None
-    values = list(values or [])[:4]
-    values += [0.0] * (4 - len(values))
-    return (float(values[0]), float(values[1]), float(values[2]), float(values[3]))
 
 
 def _bbox(values) -> tuple[float, float, float, float]:

@@ -233,8 +233,6 @@ def _add_text(dx, block: Block, body: float, margin_left: float = 0.0) -> None:
 
 
 def _add_image(dx, block: Block, page, pdf=None) -> None:
-    from io import BytesIO
-
     data = block.image_data or _crop_image(pdf, page, block)
     if not data:
         return
