@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- frontend -------------------------------------------------------------
-FROM node:22-alpine AS web
+FROM node:24-alpine AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -9,7 +9,7 @@ COPY web/ ./
 RUN npm run build
 
 # ---- runtime --------------------------------------------------------------
-FROM python:3.12-slim-bookworm
+FROM python:3.14-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -19,14 +19,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # recognition engine; the default RapidOCR/PP-OCRv6 models ship in the wheel
 # installed from requirements.txt, so no model download happens at runtime.
 # tesseract-ocr-ind provides the Indonesian language data for "--ocr-engine
-# tesseract" with the default "ind+eng" list. libglib/libgomp/libfreetype
-# back the wheels.
+# tesseract" with the default "ind+eng" list. Debian trixie ships Tesseract
+# 5.5. libglib/libgomp/libfreetype back the wheels; trixie renamed the glib
+# runtime to the time64 build (libglib2.0-0t64).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         tesseract-ocr \
         tesseract-ocr-eng \
         tesseract-ocr-ind \
-        libglib2.0-0 \
+        libglib2.0-0t64 \
         libgomp1 \
         libfreetype6 \
     && rm -rf /var/lib/apt/lists/*
