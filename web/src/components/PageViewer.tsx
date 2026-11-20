@@ -33,8 +33,9 @@ function SourceBadge({ source }: { source: "native" | "ocr" }) {
   );
 }
 
-function escapeHtml(value: string): string {
-  return value
+function escapeHtml(value: unknown): string {
+  if (value == null) return "";
+  return String(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
@@ -91,17 +92,19 @@ function nodeToRuns(node: Node, inherited: Partial<RunModel>): RunModel[] {
     out.push({ text: "\n", ...inherited });
     return out;
   }
-  const style = window.getComputedStyle(el);
   const next: Partial<RunModel> = { ...inherited };
-  const fw = style.fontWeight;
-  if (tag === "b" || tag === "strong" || parseInt(fw) >= 600 || fw === "bold")
-    next.bold = true;
+  if (tag === "b" || tag === "strong") next.bold = true;
   if (tag === "i" || tag === "em") next.italic = true;
-  const fs = parseFloat(style.fontSize);
+  if (el.style.fontWeight === "bold" || parseInt(el.style.fontWeight) >= 600)
+    next.bold = true;
+  if (el.style.fontStyle === "italic") next.italic = true;
+  const fs = parseFloat(el.style.fontSize);
   if (!isNaN(fs) && fs > 0) next.size = fs;
-  const hex = rgbToHex(style.color);
+  const hex = rgbToHex(el.style.color);
   if (hex) next.color = hex;
-  const ff = style.fontFamily.split(",")[0].replace(/['"]/g, "").trim();
+  const ff = el.style.fontFamily
+    ? el.style.fontFamily.split(",")[0].replace(/['"]/g, "").trim()
+    : "";
   if (ff) next.font = ff;
 
   for (const child of Array.from(el.childNodes)) {
@@ -131,33 +134,55 @@ function htmlToRuns(el: HTMLElement): RunModel[] {
   return merged.length ? merged : [{ text: el.innerText || "" }];
 }
 
+function blockToHtml(block: BlockModel, editable = false): string {
+  if (block.type === "table") {
+    const rows = (block.rows || [])
+      .map(
+        (row) =>
+          `<tr>${row
+            .map((cell) =>
+              editable
+                ? `<td contenteditable="true" style="border:1px solid #999;padding:2px 4px;">${escapeHtml(cell)}</td>`
+                : `<td style="border:1px solid #999;padding:4px 6px;">${escapeHtml(cell)}</td>`,
+            )
+            .join("")}</tr>`,
+      )
+      .join("");
+    const attrs = editable
+      ? ` data-block-id="${block.id}" data-block-type="table"`
+      : "";
+    return `<table${attrs} style="border-collapse:collapse;width:100%;margin:8px 0;">${rows}</table>`;
+  }
+  if (block.type === "image") {
+    const [x0 = 0, y0 = 0, x1 = 100, y1 = 100] = block.bbox || [];
+    const w = Math.round(x1 - x0);
+    const h = Math.round(y1 - y0);
+    const attrs = editable
+      ? ` data-block-id="${block.id}" data-block-type="image" contenteditable="false"`
+      : "";
+    return `<div${attrs} style="border:1px dashed #aaa;background:rgba(0,0,0,0.03);padding:12px;margin:8px 0;text-align:center;color:#888;font-size:12px;font-family:monospace;border-radius:3px;">[Image · ${w}×${h} pt]</div>`;
+  }
+  const tag =
+    block.type === "title" ? "h1" : block.type === "heading" ? "h2" : "p";
+  const align = block.align ? `text-align:${block.align};` : "";
+  const size = block.size ? `font-size:${block.size}px;` : "";
+  const weight = block.bold ? "font-weight:bold;" : "";
+  const style = block.italic ? "font-style:italic;" : "";
+  const color = block.color ? `color:${block.color};` : "";
+  const font = block.font ? `font-family:${block.font};` : "";
+  const content =
+    block.runs && block.runs.length
+      ? runsToHtml(block)
+      : escapeHtml(block.text || "");
+  const attrs = editable
+    ? ` data-block-id="${block.id}" data-block-type="${block.type}"`
+    : "";
+  return `<${tag}${attrs} style="${align}${size}${weight}${style}${color}${font}margin:6px 0;">${content}</${tag}>`;
+}
+
 function buildPreviewHtml(model: PageModel | undefined, job: Job, page: number): string {
   if (!model) return "<p>No content</p>";
-  const blocks = model.blocks
-    .map((block) => {
-      if (block.type === "table") {
-        const rows = (block.rows || [])
-          .map(
-            (row) =>
-              `<tr>${row
-                .map((cell) => `<td style="border:1px solid #999;padding:4px 6px;">${escapeHtml(cell)}</td>`)
-                .join("")}</tr>`,
-          )
-          .join("");
-        return `<table style="border-collapse:collapse;width:100%;margin:8px 0;">${rows}</table>`;
-      }
-      const tag =
-        block.type === "title" ? "h1" : block.type === "heading" ? "h2" : "p";
-      const align = block.align ? `text-align:${block.align};` : "";
-      const size = block.size ? `font-size:${block.size}px;` : "";
-      const weight = block.bold ? "font-weight:bold;" : "";
-      const style = block.italic ? "font-style:italic;" : "";
-      const color = block.color ? `color:${block.color};` : "";
-      const font = block.font ? `font-family:${block.font};` : "";
-      const content = block.runs && block.runs.length ? runsToHtml(block) : escapeHtml(block.text || "");
-      return `<${tag} style="${align}${size}${weight}${style}${color}${font}margin:6px 0;">${content}</${tag}>`;
-    })
-    .join("");
+  const blocks = model.blocks.map((b) => blockToHtml(b, false)).join("");
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Preview - ${escapeHtml(job.filename)}</title>
 <style>
   body { font-family: Arial, sans-serif; max-width: 800px; margin: 2rem auto; padding: 1rem; line-height: 1.5; color: #191713; }
@@ -383,26 +408,7 @@ export function PageViewer({ job, page, onPage }: Props) {
     if (!model || !editorRef.current || viewMode !== "document" || editorMode !== "edit") return;
     if (focusedRef.current) return;
     const container = editorRef.current;
-    container.innerHTML = model.blocks
-      .map((block) => {
-        if (block.type === "table") {
-          const rows = (block.rows || [])
-            .map(
-              (row) =>
-                `<tr>${row
-                  .map((cell) => `<td contenteditable="true" style="border:1px solid #999;padding:2px 4px;">${escapeHtml(cell)}</td>`)
-                  .join("")}</tr>`,
-            )
-            .join("");
-          return `<table data-block-id="${block.id}" data-block-type="table" style="border-collapse:collapse;width:100%;margin:6px 0;">${rows}</table>`;
-        }
-        const tag =
-          block.type === "title" ? "h1" : block.type === "heading" ? "h2" : "p";
-        const align = block.align ? `text-align:${block.align};` : "";
-        const size = block.size ? `font-size:${block.size}px;` : "";
-        return `<${tag} data-block-id="${block.id}" data-block-type="${block.type}" style="${align}${size}margin:4px 0;">${runsToHtml(block)}</${tag}>`;
-      })
-      .join("");
+    container.innerHTML = model.blocks.map((block) => blockToHtml(block, true)).join("");
   }, [model, viewMode, editorMode]);
 
   // Keyboard shortcuts for undo/redo
@@ -428,12 +434,16 @@ export function PageViewer({ job, page, onPage }: Props) {
     if (!model || !editorRef.current) return;
     const container = editorRef.current;
     const blocks: BlockModel[] = [];
-    let order = 0;
     for (const el of Array.from(container.children)) {
       const htmlEl = el as HTMLElement;
-      const blockId = htmlEl.dataset.blockId;
-      const original = model.blocks.find((b) => b.id === blockId);
-      const type = (htmlEl.dataset.blockType as BlockType) || "para";
+      let blockId = htmlEl.dataset.blockId;
+      const original = blockId ? model.blocks.find((b) => b.id === blockId) : undefined;
+      const type = (htmlEl.dataset.blockType as BlockType | "image") || "para";
+      if (!blockId) {
+        blockId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+        htmlEl.dataset.blockId = blockId;
+        htmlEl.dataset.blockType = type;
+      }
       if (htmlEl.tagName.toLowerCase() === "table") {
         const rows: string[][] = [];
         for (const tr of Array.from(htmlEl.querySelectorAll("tr"))) {
@@ -444,7 +454,7 @@ export function PageViewer({ job, page, onPage }: Props) {
         }
         blocks.push({
           ...(original || {}),
-          id: blockId || `${Date.now()}-${order++}`,
+          id: blockId,
           type: "table",
           bbox: original?.bbox || [72, 72, 500, 120],
           text: "",
@@ -457,8 +467,13 @@ export function PageViewer({ job, page, onPage }: Props) {
           font: original?.font || "",
           color: original?.color || "",
           edited: true,
-          added: original?.added || !blockId,
+          added: original?.added || !original,
+          runs: null,
         });
+      } else if (type === "image" || htmlEl.dataset.blockType === "image") {
+        if (original) {
+          blocks.push(original);
+        }
       } else {
         const tag = htmlEl.tagName.toLowerCase();
         const inferredType: BlockType =
@@ -467,8 +482,8 @@ export function PageViewer({ job, page, onPage }: Props) {
         const text = runs.map((r) => r.text).join("");
         blocks.push({
           ...(original || {}),
-          id: blockId || `${Date.now()}-${order++}`,
-          type: type !== "table" ? type : inferredType,
+          id: blockId,
+          type: type || inferredType,
           bbox: original?.bbox || [72, 72, 500, 90],
           text,
           size: original?.size || 10.5,
@@ -480,7 +495,7 @@ export function PageViewer({ job, page, onPage }: Props) {
           font: original?.font || "",
           color: original?.color || "",
           edited: true,
-          added: original?.added || !blockId,
+          added: original?.added || !original,
           runs,
         });
       }
@@ -566,13 +581,15 @@ export function PageViewer({ job, page, onPage }: Props) {
   const zoomReset = () => persistZoom(1);
 
   const openPreviewInNewTab = () => {
-    const html = buildPreviewHtml(model, job, page);
+    if (focusedRef.current) {
+      commitDocument();
+    }
+    const currentModel = pendingRef.current || model;
+    const html = buildPreviewHtml(currentModel, job, page);
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
-    const win = window.open(url, "_blank");
-    if (win) {
-      win.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
-    }
+    window.open(url, "_blank");
+    window.setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
   const source = model?.source ?? job.pages[page - 1]?.source ?? "native";
@@ -639,31 +656,38 @@ export function PageViewer({ job, page, onPage }: Props) {
           <div className="flex items-center gap-1 rounded border border-line bg-paper p-0.5">
             <button
               type="button"
-              className={`btn btn-ghost h-7 px-2 text-xs ${editorMode === "edit" ? "bg-ink text-paper" : ""}`}
-              onClick={() => setEditorMode("edit")}
+              className={`btn btn-ghost h-7 px-2.5 text-xs ${viewMode === "document" && editorMode === "edit" ? "bg-ink text-paper" : ""}`}
+              onClick={() => {
+                persistViewMode("document");
+                setEditorMode("edit");
+              }}
             >
               Edit
             </button>
             <button
               type="button"
-              className={`btn btn-ghost h-7 px-2 text-xs ${editorMode === "preview" ? "bg-ink text-paper" : ""}`}
-              onClick={() => setEditorMode("preview")}
+              className={`btn btn-ghost h-7 px-2.5 text-xs ${viewMode === "document" && editorMode === "preview" ? "bg-ink text-paper" : ""}`}
+              onClick={() => {
+                if (focusedRef.current) {
+                  commitDocument();
+                  focusedRef.current = null;
+                }
+                persistViewMode("document");
+                setEditorMode("preview");
+              }}
             >
               Preview
             </button>
-          </div>
-          <div className="flex items-center gap-1 rounded border border-line bg-paper p-0.5">
             <button
               type="button"
-              className={`btn btn-ghost h-7 px-2 text-xs ${viewMode === "document" ? "bg-ink text-paper" : ""}`}
-              onClick={() => persistViewMode("document")}
-            >
-              Document
-            </button>
-            <button
-              type="button"
-              className={`btn btn-ghost h-7 px-2 text-xs ${viewMode === "page" ? "bg-ink text-paper" : ""}`}
-              onClick={() => persistViewMode("page")}
+              className={`btn btn-ghost h-7 px-2.5 text-xs ${viewMode === "page" ? "bg-ink text-paper" : ""}`}
+              onClick={() => {
+                if (focusedRef.current) {
+                  commitDocument();
+                  focusedRef.current = null;
+                }
+                persistViewMode("page");
+              }}
             >
               Page
             </button>
@@ -725,29 +749,31 @@ export function PageViewer({ job, page, onPage }: Props) {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-4 py-2">
-        <p className="label mr-2">Add</p>
-        {BLOCK_TYPES.map((type) => (
-          <button
-            key={type}
-            type="button"
-            className="chip py-1 text-[11px]"
-            onClick={() => addBlock(type)}
-            disabled={!model || editorMode === "preview"}
-          >
-            + {blockMeta[type].label}
-          </button>
-        ))}
-        {selected && editorMode === "edit" && (
-          <button
-            type="button"
-            className="chip ml-auto py-1 text-[11px] text-danger"
-            onClick={() => selected && deleteBlock(selected)}
-          >
-            Delete block
-          </button>
-        )}
-      </div>
+      {viewMode === "document" && editorMode === "edit" && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-4 py-2">
+          <p className="label mr-2">Add</p>
+          {BLOCK_TYPES.map((type) => (
+            <button
+              key={type}
+              type="button"
+              className="chip py-1 text-[11px]"
+              onClick={() => addBlock(type)}
+              disabled={!model}
+            >
+              + {blockMeta[type].label}
+            </button>
+          ))}
+          {selected && (
+            <button
+              type="button"
+              className="chip ml-auto py-1 text-[11px] text-danger"
+              onClick={() => selected && deleteBlock(selected)}
+            >
+              Delete block
+            </button>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex h-[52vh] flex-col items-center justify-center gap-3">
@@ -761,97 +787,81 @@ export function PageViewer({ job, page, onPage }: Props) {
           <p className="text-sm text-danger">{error}</p>
         </div>
       ) : model ? (
-        editorMode === "preview" ? (
-          <div
-            className="overflow-auto bg-paper"
-            style={{ height: "62vh" }}
-          >
+        viewMode === "document" ? (
+          editorMode === "preview" ? (
             <div
-              style={{
-                transform: `scale(${zoom})`,
-                transformOrigin: "top left",
-                width: `${100 / zoom}%`,
-                minHeight: "100%",
-                padding: "1rem 1.25rem",
+              className="overflow-auto bg-paper"
+              style={{ height: "62vh" }}
+            >
+              <div
+                style={{
+                  transform: `scale(${zoom})`,
+                  transformOrigin: "top left",
+                  width: `${100 / zoom}%`,
+                  minHeight: "100%",
+                  padding: "1rem 1.25rem",
+                }}
+              >
+                <div
+                  className="preview-content"
+                  dangerouslySetInnerHTML={{
+                    __html: model.blocks.map((b) => blockToHtml(b, false)).join(""),
+                  }}
+                />
+              </div>
+            </div>
+          ) : (
+            <div
+              className="overflow-auto bg-paper"
+              style={{ height: "62vh" }}
+              onWheel={(event) => {
+                if (event.ctrlKey || event.metaKey) {
+                  event.preventDefault();
+                  if (event.deltaY < 0) zoomIn();
+                  else zoomOut();
+                }
               }}
             >
               <div
-                className="preview-content"
-                dangerouslySetInnerHTML={{
-                  __html: model.blocks
-                    .map((block) => {
-                      if (block.type === "table") {
-                        const rows = (block.rows || [])
-                          .map(
-                            (row) =>
-                              `<tr>${row
-                                .map((cell) => `<td style="border:1px solid #999;padding:4px 6px;">${escapeHtml(cell)}</td>`)
-                                .join("")}</tr>`,
-                          )
-                          .join("");
-                        return `<table style="border-collapse:collapse;width:100%;margin:8px 0;">${rows}</table>`;
-                      }
-                      const tag =
-                        block.type === "title" ? "h1" : block.type === "heading" ? "h2" : "p";
-                      const align = block.align ? `text-align:${block.align};` : "";
-                      const size = block.size ? `font-size:${block.size}px;` : "";
-                      const weight = block.bold ? "font-weight:bold;" : "";
-                      const style = block.italic ? "font-style:italic;" : "";
-                      const color = block.color ? `color:${block.color};` : "";
-                      const font = block.font ? `font-family:${block.font};` : "";
-                      const content = block.runs && block.runs.length ? runsToHtml(block) : escapeHtml(block.text || "");
-                      return `<${tag} style="${align}${size}${weight}${style}${color}${font}margin:6px 0;">${content}</${tag}>`;
-                    })
-                    .join(""),
+                style={{
+                  transform: `scale(${zoom})`,
+                  transformOrigin: "top left",
+                  width: `${100 / zoom}%`,
+                  minHeight: "100%",
+                  padding: "1rem 1.25rem",
                 }}
-              />
+              >
+                <div
+                  ref={editorRef}
+                  className="outline-none"
+                  style={{ minHeight: "40vh" }}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onFocus={() => {
+                    focusedRef.current = "doc";
+                  }}
+                  onBlur={() => {
+                    focusedRef.current = null;
+                    commitDocument();
+                    hasPendingUndoRef.current = false;
+                  }}
+                  onInput={() => {
+                    if (!hasPendingUndoRef.current && model) {
+                      pushUndo(model);
+                      hasPendingUndoRef.current = true;
+                    }
+                    commitDocument();
+                  }}
+                  onPointerDown={(e) => {
+                    const target = (e.target as HTMLElement).closest("[data-block-id]") as HTMLElement | null;
+                    if (target && target.dataset.blockId) {
+                      setSelected(target.dataset.blockId);
+                    }
+                  }}
+                />
+              </div>
             </div>
-          </div>
-        ) : viewMode === "document" ? (
-          <div
-            className="overflow-auto bg-paper"
-            style={{ height: "62vh" }}
-            onWheel={(event) => {
-              if (event.ctrlKey || event.metaKey) {
-                event.preventDefault();
-                if (event.deltaY < 0) zoomIn();
-                else zoomOut();
-              }
-            }}
-          >
-            <div
-              style={{
-                transform: `scale(${zoom})`,
-                transformOrigin: "top left",
-                width: `${100 / zoom}%`,
-                minHeight: "100%",
-                padding: "1rem 1.25rem",
-              }}
-            >
-              <div
-                ref={editorRef}
-                className="outline-none"
-                style={{ minHeight: "40vh" }}
-                contentEditable
-                suppressContentEditableWarning
-                onFocus={() => {
-                  focusedRef.current = "doc";
-                }}
-                onBlur={() => {
-                  focusedRef.current = null;
-                  commitDocument();
-                  hasPendingUndoRef.current = false;
-                }}
-                onInput={() => {
-                  if (!hasPendingUndoRef.current && model) {
-                    pushUndo(model);
-                    hasPendingUndoRef.current = true;
-                  }
-                  commitDocument();
-                }}
-              />
-            </div>
-          </div>
+          )
         ) : (
           <div className="bg-panel-2 p-3 sm:p-5">
             <div className="flex justify-center">

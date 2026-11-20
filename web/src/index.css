@@ -221,6 +221,49 @@
   .chip-on:hover {
     border-color: var(--ink);
   }
+
+  .preview-content {
+    font-family: Arial, sans-serif;
+    max-width: 800px;
+    margin: 0 auto;
+    line-height: 1.6;
+    color: var(--ink);
+  }
+
+  .preview-content h1 {
+    font-size: 1.65rem;
+    font-weight: 700;
+    margin: 1.2rem 0 0.6rem;
+    line-height: 1.25;
+  }
+
+  .preview-content h2 {
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin: 1rem 0 0.5rem;
+    line-height: 1.3;
+  }
+
+  .preview-content p {
+    margin: 0.5rem 0;
+  }
+
+  .preview-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0.75rem 0;
+  }
+
+  .preview-content td,
+  .preview-content th {
+    border: 1px solid var(--line);
+    padding: 6px 10px;
+    text-align: left;
+  }
+
+  .preview-content tr:nth-child(even) {
+    background-color: var(--panel-2);
+  }
 }
 
 @keyframes pulse-dot {

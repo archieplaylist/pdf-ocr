@@ -60,7 +60,7 @@ export interface RunModel {
 
 export interface BlockModel {
   id: string;
-  type: BlockType;
+  type: BlockType | "image";
   bbox: [number, number, number, number];
   text: string;
   size: number;

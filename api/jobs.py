@@ -110,6 +110,9 @@ class Job:
     def invalidate_artifacts(self) -> None:
         for fmt in ARTIFACT_FORMATS:
             self.output_path(fmt).unlink(missing_ok=True)
+        previews = self.directory / "previews"
+        if previews.is_dir():
+            shutil.rmtree(previews, ignore_errors=True)
 
     def snapshot(self) -> dict:
         elapsed = self.elapsed

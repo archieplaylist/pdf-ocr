@@ -542,8 +542,19 @@ def page_preview(
     cache_dir = job.directory / "previews"
     cache = cache_dir / f"{number}-{dpi}.png"
     if not cache.is_file():
+        source_pdf = job.pdf_path
+        if job.edited:
+            inplace = job.output_path("pdf-inplace")
+            if not inplace.is_file():
+                try:
+                    with job.lock:
+                        job.render("pdf-inplace", inplace)
+                except Exception:
+                    pass
+            if inplace.is_file():
+                source_pdf = inplace
         try:
-            pdf = pymupdf.open(str(job.pdf_path))
+            pdf = pymupdf.open(str(source_pdf))
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(500, f"cannot open source PDF: {exc}") from exc
         try:

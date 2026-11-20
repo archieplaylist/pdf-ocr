@@ -44,11 +44,11 @@ export default function App() {
 
   const [file, setFile] = useState<File | null>(null);
   const [fixture, setFixture] = useState<Fixture | null>(null);
-  const [formats, setFormats] = useState<string[]>(["docx", "xlsx"]);
-  const [dpi, setDpi] = useState(300);
+  const [formats, setFormats] = useState<string[]>(["docx"]);
+  const [dpi, setDpi] = useState(400);
   const [lang, setLang] = useState("ind+eng");
-  const [layout, setLayout] = useState<Layout>("auto");
-  const [engine, setEngine] = useState<OcrEngine>("auto");
+  const [layout, setLayout] = useState<Layout>("flow");
+  const [engine, setEngine] = useState<OcrEngine>("rapidocr");
 
   const [job, setJob] = useState<Job | null>(null);
   const [starting, setStarting] = useState(false);

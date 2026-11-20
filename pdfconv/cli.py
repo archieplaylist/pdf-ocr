@@ -20,11 +20,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("input", type=Path, help="input PDF")
     ap.add_argument(
         "--to",
-        default="docx,xlsx",
+        default="docx",
         help="comma-separated: docx,xlsx,pdf",
     )
     ap.add_argument("--out", type=Path, default=Path("out"), help="output directory")
-    ap.add_argument("--dpi", type=int, default=300, help="OCR render DPI (default 300)")
+    ap.add_argument("--dpi", type=int, default=400, help="OCR render DPI (default 400)")
     ap.add_argument("--lang", default="ind+eng", help="tesseract languages")
     ap.add_argument(
         "--pdf-mode",
@@ -34,13 +34,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument(
         "--ocr-engine",
-        default=None,
+        default="rapidocr",
         choices=("auto", "tesseract", "rapidocr"),
-        help="OCR backend (default: rapidocr when installed, else tesseract)",
+        help="OCR backend (default: rapidocr)",
     )
     ap.add_argument(
         "--layout",
-        default="auto",
+        default="flow",
         choices=("auto", "flow", "facsimile"),
         help="auto keeps scanned pages as images; flow rebuilds text; "
         "facsimile uses page images everywhere",
